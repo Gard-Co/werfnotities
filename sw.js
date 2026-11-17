@@ -1,5 +1,5 @@
 // Offline-cache: app opent meteen uit de cache en ververst op de achtergrond.
-const CACHE = 'werfnotities-v1';
+const CACHE = 'werfnotities-v3';
 const FILES = ['./', './index.html', './style.css', './app.js', './lib.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

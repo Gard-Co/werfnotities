@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.2';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -20,20 +20,59 @@ const LS = {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const toBlob = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
 
+/* ---------------- iconen (lijnstijl) ---------------- */
+const ICONS = {
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  chevronLeft: '<path d="m15 18-6-6 6-6"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
+  more: '<circle cx="12" cy="5" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  flash: '<path d="M13 2 4.5 13.5H12L11 22l8.5-11.5H12z"/>',
+  arrow: '<path d="M6 18 18 6M9 6h9v9"/>',
+  circle: '<ellipse cx="12" cy="12" rx="8.5" ry="7"/>',
+  pen: '<path d="M3 17c2.5-5 5-6 6.5-3.5S13 18 15.5 13 19 6 21 7"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  share: '<path d="M12 15V3M7.5 7.5 12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
+  download: '<path d="M12 3v12M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/>',
+  sheet: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/>',
+  doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l.9 12.1A2 2 0 0 0 8.9 21h6.2a2 2 0 0 0 2-1.9L18 7M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  pin: '<path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  tag: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.3"/>',
+  upload: '<path d="M12 21V9M7.5 13.5 12 9l4.5 4.5"/><path d="M5 4h14"/>',
+  checkAll: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+};
+function ico(name) {
+  const t = document.createElement('template');
+  t.innerHTML = `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  return t.content.firstChild;
+}
+
 const S = {
   project: LS.get('project', ''),
   projects: LS.get('projects', []),
   tags: LS.get('tags', ['Defect', 'Opvolgen', 'OK', 'Vraag']),
   camMode: LS.get('camMode', 'app'),
+  autoDl: LS.get('autoDl', 'ann'), // 'off' | 'ann' | 'both'
   pos: null, gpsWatch: null,
   stream: null, track: null, torch: false, camStarting: false,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
   viewId: null,
 };
-const TAG_COLORS = ['#e53935', '#fb8c00', '#43a047', '#1e88e5', '#8e24aa', '#00897b', '#6d4c41', '#546e7a'];
+const TAG_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#14b8a6', '#a16207', '#64748b'];
 const tagColor = t => { const i = S.tags.indexOf(t); return TAG_COLORS[(i < 0 ? 7 : i) % TAG_COLORS.length]; };
-const COLORS = ['#ff1744', '#ffd600', '#ffffff', '#00e5ff'];
+const COLORS = ['#ff3b30', '#ffcc00', '#ffffff', '#32d4ff'];
 
 /* ---------------- opslag (IndexedDB) ---------------- */
 let _db;
@@ -72,14 +111,16 @@ const safe = s => (s || '').replace(/[\\/:*?"<>|#%]+/g, '').trim().replace(/\s+/
 const fileBase = p => { const d = new Date(p.createdAt); return `${safe(p.project)}_${String(p.nr).padStart(3, '0')}_${isoDay(p.createdAt)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`; };
 const extOf = b => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[b?.type] || 'jpg');
 const mapUrl = p => `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`;
+const plural = (n, one, more) => `${n} ${n === 1 ? one : more}`;
 
 /* ---------------- kleine UI-hulpjes ---------------- */
 let toastT;
-function toast(msg, ms = 1800) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+function toast(msg, ok = true, ms = 1900) {
+  const t = $('#toast'); t.replaceChildren(ok ? ico('check') : '', msg); t.classList.add('show');
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
 }
 function busy(msg) { $('#busy').classList.toggle('hidden', !msg); $('#busyMsg').textContent = msg || ''; }
+const bigBtn = (iconName, label, onclick, cls = '') => el('button', { class: 'big ' + cls, onclick }, ico(iconName), label);
 
 let sheetClose = null;
 function openSheet(content, onDismiss) {
@@ -136,6 +177,7 @@ function updateGps() {
   const g = $('#gps'), p = freshPos();
   g.className = 'gps ' + (!p ? 'bad' : p.acc <= 25 ? 'good' : 'mid');
   g.title = p ? `GPS ±${Math.round(p.acc)} m` : 'Geen GPS';
+  g.querySelector('b').textContent = p ? `±${Math.round(p.acc)} m` : 'GPS';
 }
 setInterval(updateGps, 10000);
 function onNewPos() {
@@ -211,7 +253,7 @@ async function startCamera() {
   const v = $('#video'), msg = $('#camMsg');
   if (S.camMode !== 'app') {
     v.classList.add('hidden');
-    msg.textContent = 'Toestelcamera-modus: tik op de ronde knop om de camera van je gsm te openen.';
+    msg.textContent = 'Toestelcamera: tik op de ontspanknop om de camera van je gsm te openen.';
     msg.classList.remove('hidden'); return;
   }
   if (S.stream || S.camStarting) return;
@@ -227,7 +269,7 @@ async function startCamera() {
     if (caps.focusMode?.includes('continuous')) S.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
   } catch (e) {
     v.classList.add('hidden');
-    msg.textContent = `Camera niet beschikbaar (${e.name}). Geef toestemming voor de camera, of gebruik de galerij-knop.`;
+    msg.textContent = `Camera niet beschikbaar (${e.name}). Geef toestemming voor de camera, of kies een foto uit de galerij.`;
     msg.classList.remove('hidden');
   } finally { S.camStarting = false; }
 }
@@ -243,6 +285,7 @@ async function ensureProject() {
 }
 
 async function capture(quick) {
+  $('#btnShutter').classList.remove('hold');
   if (!(await ensureProject())) return;
   const v = $('#video');
   if (S.camMode !== 'app' || !S.stream || !v.videoWidth) { $('#fileCamera').click(); return; }
@@ -254,7 +297,7 @@ async function capture(quick) {
   const draft = newDraft(blob, { source: 'camera' });
   if (quick) {
     const bmp = await createImageBitmap(blob);
-    try { const rec = await saveDraft(draft, bmp); toast(`✓ #${rec.nr} opgeslagen (zonder notitie)`); refreshCamBar(); }
+    try { const rec = await saveDraft(draft, bmp); toast(`#${rec.nr} opgeslagen zonder notitie`); refreshCamBar(); autoExport(rec, blob, true); }
     catch (e) { alert('Opslaan mislukt: ' + e.message); }
     finally { bmp.close(); }
   } else openEditor(draft);
@@ -271,6 +314,7 @@ function newDraft(blob, { source, date, lat, lon, name } = {}) {
 }
 async function importFile(f, source) {
   if (!f) return;
+  if (source === 'galerij' && await readMeta(f)) { await importAnnotated([f]); return; } // al een werfnotitie
   if (!(await ensureProject())) return;
   const ex = source === 'galerij' ? await readExif(f) : {};
   const draft = newDraft(f, { source, date: ex.date || (source === 'galerij' ? f.lastModified : Date.now()), lat: ex.lat, lon: ex.lon, name: f.name });
@@ -297,38 +341,43 @@ function pickProject() {
   return new Promise(res => {
     let done = false;
     const finish = v => { if (done) return; done = true; res(v); };
-    const input = el('input', { type: 'text', placeholder: 'Nieuw project, bv. "Kerkstraat 12"', enterkeyhint: 'done', autocapitalize: 'sentences' });
+    const input = el('input', { type: 'text', placeholder: 'Nieuw project, bv. Kerkstraat 12', enterkeyhint: 'done', autocapitalize: 'sentences' });
     const choose = p => { setProject(p); closeSheet(); finish(p); };
     const add = () => { const v = input.value.trim(); if (v) choose(v); };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
     const rows = S.projects.map(p => {
       const row = el('div', { class: 'row' + (p === S.project ? ' on' : '') },
-        el('button', { class: 'row-main', onclick: () => choose(p) }, p),
+        el('button', { class: 'row-main', onclick: () => choose(p) }, p, p === S.project ? ico('check') : null),
         el('button', { class: 'row-x', 'aria-label': 'Uit lijst halen', onclick: () => {
           S.projects = S.projects.filter(x => x !== p); LS.set('projects', S.projects); row.remove();
-        } }, '✕'));
+        } }, ico('x')));
       return row;
     });
     openSheet(el('div', {},
       el('h3', {}, 'Project'),
-      el('div', { class: 'add-row' }, input, el('button', { class: 'primary', onclick: add }, 'OK')),
-      rows.length ? el('div', { class: 'list' }, rows) : el('p', {}, 'Typ de naam van je eerste project.'),
-      rows.length ? el('p', {}, '✕ haalt een project enkel uit deze lijst, foto\'s blijven bewaard.') : null,
+      el('div', { class: 'add-row' }, input, el('button', { class: 'primary', onclick: add }, 'Toevoegen')),
+      rows.length ? el('div', { class: 'list' }, rows) : el('p', {}, 'Geef je eerste project een naam.'),
+      rows.length ? el('p', {}, 'Het kruisje haalt een project enkel uit deze lijst; de foto\'s blijven bewaard.') : null,
     ), () => finish(null));
     if (!S.projects.length) setTimeout(() => input.focus(), 150);
   });
 }
 
 /* ---------------- instellingen ---------------- */
+function segControl(opts, current, onPick) {
+  const seg = el('div', { class: 'seg' });
+  opts.forEach(([v, t]) => seg.append(el('button', { class: current === v ? 'on' : '', onclick: () => {
+    [...seg.children].forEach((b, i) => b.classList.toggle('on', opts[i][0] === v)); onPick(v);
+  } }, t)));
+  return seg;
+}
 async function openSettings() {
-  const seg = el('div', { class: 'seg' },
-    el('button', { class: S.camMode === 'app' ? 'on' : '', onclick: () => setCam('app') }, 'In de app (snelst)'),
-    el('button', { class: S.camMode === 'device' ? 'on' : '', onclick: () => setCam('device') }, 'Toestelcamera'));
-  function setCam(m) {
-    S.camMode = m; LS.set('camMode', m);
-    [...seg.children].forEach((b, i) => b.classList.toggle('on', (i === 0) === (m === 'app')));
-    stopCamera(); startCamera();
-  }
+  const camSeg = segControl([['app', 'In de app'], ['device', 'Toestelcamera']], S.camMode, m => {
+    S.camMode = m; LS.set('camMode', m); stopCamera(); startCamera();
+  });
+  const dlSeg = segControl([['off', 'Uit'], ['ann', 'Met notitie'], ['both', '+ Origineel']], S.autoDl, v => {
+    S.autoDl = v; LS.set('autoDl', v);
+  });
   const tagInput = el('input', { type: 'text', value: S.tags.join(', ') });
   tagInput.addEventListener('change', () => {
     const t = tagInput.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -337,22 +386,24 @@ async function openSettings() {
   const storage = el('p', {}, '…');
   openSheet(el('div', {},
     el('h3', {}, 'Instellingen'),
-    el('h4', {}, 'Camera'), seg,
-    el('p', {}, 'Toestelcamera geeft de hoogste kwaliteit, maar kost een extra tik (bevestigen).'),
-    el('h4', {}, 'Snelle tags (komma-gescheiden)'), tagInput,
+    el('h4', {}, 'Camera'), camSeg,
+    el('p', {}, 'Toestelcamera geeft de hoogste kwaliteit, maar vraagt één tik extra om te bevestigen.'),
+    el('h4', {}, 'Kopie automatisch in Downloads'), dlSeg,
+    el('p', {}, 'Na elke foto komt een kopie in de map Downloads, zichtbaar in je galerij. Vraagt Chrome om meerdere downloads toe te staan, kies dan Toestaan.'),
+    el('h4', {}, 'Snelle tags'), tagInput,
+    el('p', {}, 'Gescheiden door komma\'s.'),
     el('h4', {}, 'Opslag'), storage,
     el('h4', {}, 'Tips'),
-    el('p', {}, '• Lang drukken op de ontspanknop = foto meteen opslaan zonder notitie.'),
-    el('p', {}, '• Tik op 🎤 op je toetsenbord om de notitie in te spreken.'),
-    el('p', {}, '• In het overzicht: lang drukken op een foto om te selecteren.'),
-    el('p', {}, '• Foto\'s staan in de app. Gebruik ZIP-export of "Opslaan" als back-up.'),
-    el('p', {}, 'Werfnotities v' + APP_VERSION),
+    el('p', {}, 'Lang drukken op de ontspanknop slaat de foto meteen op, zonder notitie.'),
+    el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
+    el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken.'),
+    el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION),
   ));
   try {
     const persisted = await navigator.storage?.persisted?.();
     const est = await navigator.storage?.estimate?.();
     const n = (await getAllPhotos()).length;
-    storage.textContent = `${n} foto's · ${est ? (est.usage / 1048576).toFixed(0) + ' MB gebruikt' : ''} · ${persisted ? 'beschermd tegen automatisch wissen ✓' : 'nog niet beschermd: installeer de app op je beginscherm'}`;
+    storage.textContent = `${plural(n, 'foto', 'foto\'s')} · ${est ? (est.usage / 1048576).toFixed(0) + ' MB' : ''} · ${persisted ? 'beschermd tegen automatisch wissen' : 'nog niet beschermd: installeer de app op je beginscherm'}`;
   } catch { storage.textContent = ''; }
 }
 
@@ -372,8 +423,9 @@ async function openEditor(draft, returnTo = 'Camera') {
 }
 function updateEdInfo() {
   const d = ED.draft; if (!d) return;
-  $('#edTitle').textContent = `${d.nr ? '#' + d.nr + ' · ' : ''}${d.project} ▾ · ${fmtDate(d.createdAt)} ${fmtTime(d.createdAt)}`;
-  $('#edLoc').textContent = '📍 ' + (d.address || (d.lat != null ? fmtCoords(d.lat, d.lon) + (navigator.onLine ? ' (adres zoeken…)' : '') : d.wantPos ? 'Wachten op GPS…' : 'Geen locatie'));
+  $('#edTitle').textContent = `${d.nr ? '#' + d.nr + '  ' : ''}${d.project}  ·  ${fmtDate(d.createdAt)} ${fmtTime(d.createdAt)}`;
+  const loc = d.address || (d.lat != null ? fmtCoords(d.lat, d.lon) + (navigator.onLine ? ' — adres zoeken…' : '') : d.wantPos ? 'Wachten op GPS…' : 'Geen locatie');
+  $('#edLoc').replaceChildren(ico('pin'), loc);
 }
 function layoutCanvas() {
   if (!ED.bmp) return;
@@ -425,20 +477,20 @@ cv.addEventListener('pointerup', () => {
 cv.addEventListener('pointercancel', () => { ED.cur = null; drawEditor(); });
 
 function drawShapes(ctx, shapes, x, y, w, h) {
-  const lw = Math.max(2, Math.min(w, h) * 0.012);
+  const lw = Math.max(2, Math.min(w, h) * 0.011);
   ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const s of shapes) {
     const P = s.pts.map(([u, v]) => [x + u * w, y + v * h]);
     ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = lw;
-    ctx.shadowColor = 'rgba(0,0,0,.75)'; ctx.shadowBlur = lw * 1.2;
+    ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = lw * 0.8;
     const a = P[0], b = P[P.length - 1];
     if (s.type === 'arrow') {
-      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), hl = lw * 4.5;
+      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), hl = lw * 4.2;
       ctx.beginPath(); ctx.moveTo(a[0], a[1]);
       ctx.lineTo(b[0] - Math.cos(ang) * hl * 0.8, b[1] - Math.sin(ang) * hl * 0.8); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(b[0], b[1]);
-      ctx.lineTo(b[0] - hl * Math.cos(ang - 0.45), b[1] - hl * Math.sin(ang - 0.45));
-      ctx.lineTo(b[0] - hl * Math.cos(ang + 0.45), b[1] - hl * Math.sin(ang + 0.45));
+      ctx.lineTo(b[0] - hl * Math.cos(ang - 0.42), b[1] - hl * Math.sin(ang - 0.42));
+      ctx.lineTo(b[0] - hl * Math.cos(ang + 0.42), b[1] - hl * Math.sin(ang + 0.42));
       ctx.closePath(); ctx.fill();
     } else if (s.type === 'circle') {
       ctx.beginPath();
@@ -480,23 +532,37 @@ function closeEditor() {
 async function editorSave() {
   const d = ED.draft; if (!d) return;
   d.note = $('#edNote').value.trim();
+  const isNew = !d.id, orig = d.origBlob;
   busy('Opslaan…');
-  try { const rec = await saveDraft(d, ED.bmp); toast(`✓ #${rec.nr} opgeslagen`); }
+  let rec;
+  try { rec = await saveDraft(d, ED.bmp); toast(`#${rec.nr} opgeslagen`); }
   catch (e) { busy(); alert('Opslaan mislukt: ' + e.message); return; }
   busy(); closeEditor();
+  autoExport(rec, orig, isNew);
+}
+/* Kopie automatisch in de map Downloads zetten (zichtbaar in de galerij). */
+async function autoExport(rec, origBlob, isNew) {
+  if (S.autoDl === 'off') return;
+  try {
+    download((await annFiles([rec]))[0]);
+    if (S.autoDl === 'both' && isNew && origBlob) {
+      await sleep(500);
+      download(new File([origBlob], `${fileBase(rec)}_origineel.${extOf(origBlob)}`, { type: origBlob.type || 'image/jpeg' }));
+    }
+  } catch (e) { console.warn('Automatisch opslaan mislukt', e); }
 }
 function editorLocationSheet() {
   const d = ED.draft, p = freshPos();
   openSheet(el('div', {},
     el('h3', {}, 'Locatie'),
-    el('p', {}, d.lat != null ? locText(d) + (d.address ? ` (${fmtCoords(d.lat, d.lon)})` : '') : 'Geen locatie gekoppeld.'),
-    p ? el('button', { class: 'big', onclick: () => { Object.assign(d, { lat: p.lat, lon: p.lon, acc: p.acc, address: null, wantPos: false }); closeSheet(); updateEdInfo(); lookupAddress(d); } }, `📍 Huidige locatie gebruiken (±${Math.round(p.acc)} m)`) : el('p', {}, 'Geen actuele GPS-positie beschikbaar.'),
-    d.lat != null ? el('button', { class: 'big', onclick: () => window.open(mapUrl(d), '_blank') }, '🗺️ Tonen op kaart') : null,
-    d.lat != null || d.wantPos ? el('button', { class: 'big', onclick: () => { Object.assign(d, { lat: null, lon: null, acc: null, address: null, wantPos: false }); closeSheet(); updateEdInfo(); } }, '🚫 Geen locatie op deze foto') : null,
+    el('p', {}, d.lat != null ? locText(d) + (d.address ? `  (${fmtCoords(d.lat, d.lon)})` : '') : 'Geen locatie gekoppeld.'),
+    p ? bigBtn('pin', `Huidige locatie gebruiken (±${Math.round(p.acc)} m)`, () => { Object.assign(d, { lat: p.lat, lon: p.lon, acc: p.acc, address: null, wantPos: false }); closeSheet(); updateEdInfo(); lookupAddress(d); }) : el('p', {}, 'Geen actuele GPS-positie beschikbaar.'),
+    d.lat != null ? bigBtn('map', 'Tonen op kaart', () => window.open(mapUrl(d), '_blank')) : null,
+    d.lat != null || d.wantPos ? bigBtn('ban', 'Geen locatie op deze foto', () => { Object.assign(d, { lat: null, lon: null, acc: null, address: null, wantPos: false }); closeSheet(); updateEdInfo(); }) : null,
   ));
 }
 async function editorProjectChange() {
-  if (ED.draft.id) { toast('Project wijzigen kan enkel bij een nieuwe foto'); return; }
+  if (ED.draft.id) { toast('Project wijzigen kan enkel bij een nieuwe foto', false); return; }
   const p = await pickProject();
   if (p && ED.draft) { ED.draft.project = p; updateEdInfo(); }
 }
@@ -518,10 +584,11 @@ async function saveDraft(d, bmp) {
     id: d.id, project: d.project, nr: d.nr, createdAt: d.createdAt, savedAt: Date.now(),
     lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], shapes: d.shapes,
     source: d.source, origName: d.origName, origType: d.origBlob?.type || 'image/jpeg', origW: bmp.width, origH: bmp.height,
+    imported: d.imported || false,
   };
   const r = await renderAnnotated(bmp, rec);
   await putBlob(rec.id + ':ann', r.blob);
-  rec.annW = r.w; rec.annH = r.h; rec.thumb = r.thumb;
+  Object.assign(rec, { annW: r.w, annH: r.h, imgH: r.ih, thumb: r.thumb });
   await putPhoto(rec);
   addProject(rec.project);
   if (rec.lat != null && !rec.address) setTimeout(processPending, 1500);
@@ -533,11 +600,12 @@ async function rerender(rec) {
   try {
     const r = await renderAnnotated(bmp, rec);
     await putBlob(rec.id + ':ann', r.blob);
-    rec.annW = r.w; rec.annH = r.h; rec.thumb = r.thumb;
+    Object.assign(rec, { annW: r.w, annH: r.h, imgH: r.ih, thumb: r.thumb });
     await putPhoto(rec);
   } finally { bmp.close(); }
 }
-const FONT = (px, bold) => `${bold ? '700 ' : ''}${px}px system-ui, Roboto, "Segoe UI", Arial, sans-serif`;
+const FONT = (px, w = 400) => `${w} ${px}px Roboto, "Segoe UI", system-ui, -apple-system, Arial, sans-serif`;
+const PIN = new Path2D('M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z');
 function wrapText(ctx, text, maxW) {
   const out = [];
   for (const para of text.split('\n')) {
@@ -567,54 +635,59 @@ async function renderAnnotated(bmp, rec) {
   const MAX = 1600;
   const sc = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
   const W = Math.round(bmp.width * sc), IH = Math.round(bmp.height * sc);
-  const fs = Math.max(14, Math.round(Math.min(W, IH) * 0.036)), sfs = Math.round(fs * 0.8);
-  const pad = Math.round(fs * 0.6), gap = Math.round(fs * 0.3);
+  const fs = Math.max(14, Math.round(Math.min(W, IH) * 0.034)), sfs = Math.round(fs * 0.78);
+  const pad = Math.round(fs * 0.75), gap = Math.round(fs * 0.4);
   const m = document.createElement('canvas').getContext('2d');
   m.font = FONT(fs);
   const noteLines = rec.note ? wrapText(m, rec.note, W - 2 * pad) : [];
-  const L1 = fs * 1.3, L2 = sfs * 1.4, LT = rec.tags.length ? fs * 1.4 : 0, LN = fs * 1.3;
-  const barH = Math.round(pad + L1 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.7);
+  const L1 = fs * 1.3, L2 = sfs * 1.45, LT = rec.tags.length ? fs * 1.25 : 0, LN = fs * 1.32;
+  const barH = Math.round(pad + L1 + gap * 0.3 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
 
   const c = document.createElement('canvas'); c.width = W; c.height = IH + barH;
   const ctx = c.getContext('2d');
   ctx.drawImage(bmp, 0, 0, W, IH);
   drawShapes(ctx, rec.shapes, 0, 0, W, IH);
-  ctx.fillStyle = '#141414'; ctx.fillRect(0, IH, W, barH);
-  ctx.fillStyle = '#ffc107'; ctx.fillRect(0, IH, W, Math.max(3, Math.round(fs * 0.12)));
+  ctx.fillStyle = '#111113'; ctx.fillRect(0, IH, W, barH);
+  ctx.fillStyle = '#f5b400'; ctx.fillRect(0, IH, W, Math.max(2, Math.round(fs * 0.08)));
   ctx.textBaseline = 'top';
   let y = IH + pad;
   // regel 1: #nr  project ......... datum uur
-  ctx.font = FONT(fs, true); ctx.fillStyle = '#ffc107';
+  ctx.font = FONT(fs, 700); ctx.fillStyle = '#f5b400';
   const nrTxt = `#${rec.nr}`; ctx.fillText(nrTxt, pad, y);
-  const x = pad + ctx.measureText(nrTxt).width + fs * 0.5;
-  ctx.font = FONT(fs); ctx.fillStyle = '#fff';
+  const x = pad + ctx.measureText(nrTxt).width + fs * 0.55;
+  ctx.font = FONT(fs, 400); ctx.fillStyle = '#a1a1aa';
   const dt = `${fmtDate(rec.createdAt)}  ${fmtTime(rec.createdAt)}`, dtW = ctx.measureText(dt).width;
   ctx.fillText(dt, W - pad - dtW, y);
-  ctx.font = FONT(fs, true);
+  ctx.font = FONT(fs, 600); ctx.fillStyle = '#ffffff';
   ctx.fillText(ellipsize(ctx, rec.project, W - pad - dtW - fs - x), x, y);
-  y += L1;
-  // regel 2: locatie
-  ctx.font = FONT(sfs); ctx.fillStyle = '#bdbdbd';
-  ctx.fillText(ellipsize(ctx, '📍 ' + locText(rec), W - 2 * pad), pad, y);
+  y += L1 + gap * 0.3;
+  // regel 2: locatie met speld-icoon
+  const ps = sfs / 24;
+  ctx.save(); ctx.translate(pad - ps, y - ps * 1.5); ctx.scale(ps * 1.05, ps * 1.05);
+  ctx.strokeStyle = '#a1a1aa'; ctx.lineWidth = 2; ctx.stroke(PIN); ctx.restore();
+  ctx.font = FONT(sfs, 400); ctx.fillStyle = '#a1a1aa';
+  ctx.fillText(ellipsize(ctx, locText(rec), W - 2 * pad - sfs * 1.3), pad + sfs * 1.25, y);
   y += L2;
   // tags
   if (LT) {
     y += gap;
-    const tfs = Math.round(fs * 0.8); ctx.font = FONT(tfs, true);
-    let tx = pad;
+    const tfs = Math.round(fs * 0.72); ctx.font = FONT(tfs, 600);
+    let tx = pad; const th = fs * 1.15;
     for (const t of rec.tags) {
-      const tw = ctx.measureText(t).width + tfs * 1.1;
+      const tw = ctx.measureText(t).width + tfs * 1.9;
       if (tx + tw > W - pad) break;
-      ctx.fillStyle = tagColor(t);
-      ctx.beginPath(); ctx.roundRect(tx, y, tw, fs * 1.2, fs * 0.3); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.fillText(t, tx + tfs * 0.55, y + (fs * 1.2 - tfs) / 2 + 1);
-      tx += tw + fs * 0.35;
+      ctx.fillStyle = tagColor(t) + '33';
+      ctx.beginPath(); ctx.roundRect(tx, y, tw, th, th / 2); ctx.fill();
+      ctx.strokeStyle = tagColor(t); ctx.lineWidth = Math.max(1, fs * 0.05); ctx.stroke();
+      ctx.fillStyle = tagColor(t); ctx.beginPath(); ctx.arc(tx + tfs * 0.75, y + th / 2, tfs * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText(t, tx + tfs * 1.2, y + (th - tfs) / 2 + 1);
+      tx += tw + fs * 0.3;
     }
     y += LT;
   }
   // notitie
   if (noteLines.length) {
-    y += gap; ctx.font = FONT(fs); ctx.fillStyle = '#fff';
+    y += gap; ctx.font = FONT(fs, 400); ctx.fillStyle = '#f4f4f5';
     for (const l of noteLines) { ctx.fillText(l, pad, y); y += LN; }
   }
   const blob = await toBlob(c, 0.8);
@@ -622,7 +695,83 @@ async function renderAnnotated(bmp, rec) {
   const tc = document.createElement('canvas'); tc.width = tw; tc.height = th;
   tc.getContext('2d').drawImage(c, 0, 0, W, IH, 0, 0, tw, th);
   const thumb = await toBlob(tc, 0.7);
-  return { blob, w: W, h: c.height, thumb };
+  return { blob, w: W, h: c.height, ih: IH, thumb };
+}
+
+/* ---------------- verborgen info in de JPEG (om later terug te importeren) ---------------- */
+const META_TAG = 'WERFNOTITIES:';
+async function withMeta(blob, p) {
+  const meta = {
+    app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt,
+    lat: p.lat, lon: p.lon, acc: p.acc, address: p.address, note: p.note, tags: p.tags, source: p.source,
+    imgH: p.imgH || Math.round(p.origH * p.annW / p.origW),
+  };
+  const txt = new TextEncoder().encode(META_TAG + JSON.stringify(meta));
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf[0] !== 0xFF || buf[1] !== 0xD8 || txt.length > 65000) return blob;
+  let at = 2; // na JFIF-blok invoegen
+  if (buf[2] === 0xFF && buf[3] === 0xE0) at = 4 + ((buf[4] << 8) | buf[5]);
+  const len = txt.length + 2;
+  const seg = new Uint8Array(4 + txt.length);
+  seg[0] = 0xFF; seg[1] = 0xFE; seg[2] = len >> 8; seg[3] = len & 0xFF; seg.set(txt, 4);
+  return new Blob([buf.subarray(0, at), seg, buf.subarray(at)], { type: 'image/jpeg' });
+}
+async function readMeta(file) {
+  try {
+    const buf = new Uint8Array(await file.slice(0, 262144).arrayBuffer());
+    if (buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+    let o = 2;
+    while (o + 4 < buf.length) {
+      if (buf[o] !== 0xFF) return null;
+      const m = buf[o + 1];
+      if (m === 0xDA || m === 0xD9) return null;
+      const len = (buf[o + 2] << 8) | buf[o + 3];
+      if (m === 0xFE) {
+        const s = new TextDecoder().decode(buf.subarray(o + 4, o + 2 + len));
+        if (s.startsWith(META_TAG)) {
+          const j = JSON.parse(s.slice(META_TAG.length));
+          if (j.app === 'werfnotities' && j.id) return j;
+        }
+      }
+      o += 2 + len;
+    }
+  } catch { /* geen werfnotitie */ }
+  return null;
+}
+async function importAnnotated(files) {
+  let added = 0, skipped = 0, noMeta = 0;
+  busy('Importeren…');
+  for (const f of files) {
+    try {
+      const meta = await readMeta(f);
+      if (!meta) { noMeta++; continue; }
+      if (await getPhoto(meta.id)) { skipped++; continue; }
+      const bmp = await createImageBitmap(f);
+      const W = bmp.width, H = bmp.height, ih = Math.min(H, meta.imgH || H);
+      const c = document.createElement('canvas'); c.width = W; c.height = ih;
+      c.getContext('2d').drawImage(bmp, 0, 0); bmp.close();
+      const base = await toBlob(c, 0.92);
+      const tw = 360, tc = document.createElement('canvas'); tc.width = tw; tc.height = Math.round(ih * tw / W);
+      tc.getContext('2d').drawImage(c, 0, 0, tc.width, tc.height);
+      const rec = {
+        id: meta.id, project: meta.project || 'Geïmporteerd', nr: meta.nr || 0, createdAt: meta.createdAt || f.lastModified,
+        savedAt: Date.now(), lat: meta.lat ?? null, lon: meta.lon ?? null, acc: meta.acc ?? null, address: meta.address || null,
+        note: meta.note || '', tags: meta.tags || [], shapes: [], source: meta.source || '', origName: f.name, origType: 'image/jpeg',
+        origW: W, origH: ih, annW: W, annH: H, imgH: ih, imported: true, thumb: await toBlob(tc, 0.7),
+      };
+      await putBlob(rec.id + ':orig', base);
+      await putBlob(rec.id + ':ann', f);
+      await putPhoto(rec);
+      addProject(rec.project); added++;
+    } catch (e) { console.warn('Import mislukt', f.name, e); noMeta++; }
+  }
+  busy();
+  const parts = [`${plural(added, 'foto', 'foto\'s')} geïmporteerd`];
+  if (skipped) parts.push(`${skipped} stonden al in de app`);
+  if (noMeta) parts.push(`${noMeta} zonder notitie-info overgeslagen`);
+  if (noMeta && !added) alert(parts.join('\n') + '\n\nAlleen foto\'s die met Werfnotities 1.2 of later zijn opgeslagen of gedeeld, bevatten de info. Via WhatsApp verstuurde foto\'s verliezen die info.');
+  else toast(parts.join(' · '), added > 0, 3000);
+  if (S.screen === 'Overview') loadOverview(); else refreshCamBar();
 }
 
 /* ---------------- overzicht ---------------- */
@@ -655,9 +804,10 @@ function renderGrid() {
     const u = URL.createObjectURL(p.thumb); gridUrls.push(u);
     const cell = el('div', { class: 'cell' + (S.selected.has(p.id) ? ' sel' : '') },
       el('img', { src: u, alt: '', loading: 'lazy' }),
-      el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 10) + ' ' : '') + '#' + p.nr),
+      el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 12) + '  ' : '') + '#' + p.nr),
       p.tags.length ? el('span', { class: 'dots' }, p.tags.map(t => el('i', { style: `background:${tagColor(t)}` }))) : null,
-      el('span', { class: 'cap' }, p.note || `${fmtDate(p.createdAt)} ${fmtTime(p.createdAt)}`));
+      el('span', { class: 'cap' }, p.note || `${fmtDate(p.createdAt)} ${fmtTime(p.createdAt)}`),
+      el('span', { class: 'chk' }, ico('check')));
     onTapOrHold(cell, () => {
       if (S.selecting) toggleSel(p.id); else openViewer(p.id);
     }, () => { if (!S.selecting) setSelecting(true); toggleSel(p.id, true); });
@@ -675,6 +825,11 @@ function setSelecting(on, silent) {
   $('#ovSelect').classList.toggle('on', on);
   $('#ovSelect').textContent = on ? 'Klaar' : 'Selecteer';
   if (!silent) renderGrid();
+}
+function selectAll() {
+  setSelecting(true, true);
+  S.list.forEach(p => S.selected.add(p.id));
+  renderGrid();
 }
 function updateActions() {
   const a = $('#ovActions'), n = S.selected.size;
@@ -695,8 +850,54 @@ function exportName(list) {
 }
 async function annFiles(list) {
   const out = [];
-  for (const p of list) out.push(new File([await getBlob(p.id + ':ann')], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
+  for (const p of list) out.push(new File([await withMeta(await getBlob(p.id + ':ann'), p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
   return out;
+}
+function overviewMenu() {
+  const proj = S.ovProject !== '__all__' ? S.ovProject : null;
+  openSheet(el('div', {},
+    el('h3', {}, 'Meer'),
+    bigBtn('checkAll', 'Alles selecteren', () => { closeSheet(); selectAll(); }),
+    bigBtn('upload', 'Foto\'s met notitie importeren', () => { closeSheet(); $('#fileImport').click(); }),
+    proj ? bigBtn('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); })
+      : el('p', {}, 'Kies bovenaan één project om het af te sluiten.'),
+    el('p', {}, 'Importeren: kies foto\'s met notitie die je eerder uit deze app bewaard of gedeeld hebt. Project, nummer, tags, notitie, datum en adres worden teruggelezen, zodat je opnieuw een Excel of PDF kunt maken.'),
+  ));
+}
+async function closeProject(proj) {
+  const list = (await getAllPhotos()).filter(p => p.project === proj).sort((a, b) => a.nr - b.nr);
+  if (!list.length) return;
+  busy('ZIP maken…');
+  let zip;
+  try { zip = await buildZip(list); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
+  busy();
+  const files = [zip];
+  const canShare = navigator.canShare?.({ files });
+  const delBtn = bigBtn('trash', `${plural(list.length, 'foto', 'foto\'s')} uit de app wissen`, async () => {
+    if (!confirm(`Alle ${plural(list.length, 'foto', 'foto\'s')} van "${proj}" uit de app wissen?\n\nDe ZIP en de kopieën in Downloads blijven bestaan.`)) return;
+    closeSheet(); busy('Wissen…');
+    for (const p of list) await deletePhoto(p.id);
+    busy();
+    S.projects = S.projects.filter(x => x !== proj); LS.set('projects', S.projects);
+    if (S.project === proj) { S.project = ''; LS.set('project', ''); }
+    S.ovProject = '__all__'; setSelecting(false, true); await loadOverview();
+    toast(`Project "${proj}" afgesloten`);
+  }, 'danger');
+  delBtn.disabled = true;
+  const saved = () => { delBtn.disabled = false; };
+  openSheet(el('div', {},
+    el('h3', {}, `Project "${proj}" afsluiten`),
+    el('p', {}, `${plural(list.length, 'foto', 'foto\'s')} · ZIP met originelen, foto's met notitie en Excel · ${(zip.size / 1048576).toFixed(1)} MB`),
+    el('h4', {}, 'Stap 1 · Bewaar de ZIP'),
+    canShare ? bigBtn('share', 'Delen (Drive, mail…)', async () => {
+      try { await navigator.share({ files, title: zip.name }); saved(); }
+      catch (e) { if (e.name !== 'AbortError') { download(zip); saved(); } }
+    }) : null,
+    bigBtn('download', 'Opslaan op gsm (Downloads)', () => { download(zip); saved(); }),
+    el('h4', {}, 'Stap 2 · Opruimen'),
+    delBtn,
+    el('p', {}, 'Wissen kan pas nadat je de ZIP bewaard hebt.'),
+  ));
 }
 
 /* ---------------- delen / downloaden ---------------- */
@@ -708,7 +909,7 @@ function download(file) {
 }
 async function downloadMany(files) {
   for (const f of files) { download(f); await sleep(350); }
-  toast(`${files.length} bestand(en) in Downloads`);
+  toast(`${plural(files.length, 'bestand', 'bestanden')} in Downloads`);
 }
 async function shareFiles(files, title) {
   if (!navigator.canShare?.({ files })) return false;
@@ -724,18 +925,21 @@ function deliverSheet(files, title) {
   const canShare = navigator.canShare?.({ files });
   openSheet(el('div', {},
     el('h3', {}, title),
-    el('p', {}, files.length === 1 ? files[0].name : `${files.length} bestanden`),
-    canShare ? el('button', { class: 'big', onclick: async () => { closeSheet(); try { await navigator.share({ files, title }); } catch (e) { if (e.name !== 'AbortError') downloadMany(files); } } }, '📤 Delen… (WhatsApp, mail, Drive…)') : null,
-    el('button', { class: 'big', onclick: () => { closeSheet(); downloadMany(files); } }, '💾 Opslaan op gsm (map Downloads)'),
+    el('p', {}, files.length === 1 ? files[0].name : plural(files.length, 'bestand', 'bestanden')),
+    canShare ? bigBtn('share', 'Delen (WhatsApp, mail, Drive…)', async () => {
+      closeSheet();
+      try { await navigator.share({ files, title }); } catch (e) { if (e.name !== 'AbortError') downloadMany(files); }
+    }) : null,
+    bigBtn('download', 'Opslaan op gsm (Downloads)', () => { closeSheet(); downloadMany(files); }),
   ));
 }
 
 async function ovAction(act) {
   const list = targets();
-  if (!list.length) { toast('Geen foto\'s'); return; }
+  if (!list.length) { toast('Geen foto\'s', false); return; }
   try {
     if (act === 'share') {
-      busy('Voorbereiden…'); const files = await annFiles(list); busy();
+      busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
       if (!(await shareFiles(files, exportName(list)))) await downloadMany(files);
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
@@ -751,7 +955,7 @@ async function ovAction(act) {
       deliverSheet([f], 'ZIP met alles');
     } else if (act === 'delete') {
       if (!S.selected.size) return;
-      if (!confirm(`${list.length} foto('s) definitief verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
+      if (!confirm(`${plural(list.length, 'foto', 'foto\'s')} definitief uit de app verwijderen?`)) return;
       for (const p of list) await deletePhoto(p.id);
       setSelecting(false, true); await loadOverview(); toast('Verwijderd');
     }
@@ -760,15 +964,13 @@ async function ovAction(act) {
 
 /* ---------------- exports ---------------- */
 async function buildExcel(list) {
-  const headers = ['Nr', 'Project', 'Datum', 'Uur', 'Adres', 'Breedtegraad', 'Lengtegraad', 'Kaart', 'Tags', 'Notitie', 'Foto met notitie', 'Foto origineel', 'Bron'];
+  const headers = ['Nr', 'Project', 'Tags', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
   const rows = list.map(p => [
-    p.nr, p.project, fmtDate(p.createdAt), fmtTime(p.createdAt), p.address || '',
-    p.lat ?? '', p.lon ?? '',
-    p.lat != null ? { f: `HYPERLINK("${mapUrl(p)}","Kaart")`, v: 'Kaart' } : '',
-    p.tags.join(', '), p.note || '',
+    p.nr, p.project, p.tags.join(', '), p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
+    p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
     fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '',
   ]);
-  const blob = await makeXlsx(headers, rows, [6, 20, 11, 7, 34, 12, 12, 8, 16, 50, 34, 38, 9]);
+  const blob = await makeXlsx(headers, rows, [6, 20, 16, 50, 11, 7, 34, 34, 38, 12]);
   return new File([blob], exportName(list) + '.xlsx', { type: blob.type });
 }
 async function buildPdf(list) {
@@ -778,7 +980,7 @@ async function buildPdf(list) {
   const times = list.map(p => p.createdAt);
   const from = fmtDate(Math.min(...times)), to = fmtDate(Math.max(...times));
   const title = 'Werfverslag – ' + (projs.length === 1 ? projs[0] : projs.join(', '));
-  const sub = `${list.length} foto's · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}`;
+  const sub = `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}`;
   const blob = await makePdf(title, sub, imgs);
   return new File([blob], exportName(list) + '.pdf', { type: 'application/pdf' });
 }
@@ -786,7 +988,7 @@ async function buildZip(list) {
   const base = exportName(list);
   const files = [];
   for (const p of list) {
-    files.push({ name: `${base}/met_notitie/${fileBase(p)}.jpg`, data: await getBlob(p.id + ':ann') });
+    files.push({ name: `${base}/met_notitie/${fileBase(p)}.jpg`, data: await withMeta(await getBlob(p.id + ':ann'), p) });
     const ob = await getBlob(p.id + ':orig');
     files.push({ name: `${base}/origineel/${fileBase(p)}_origineel.${extOf(ob)}`, data: ob });
   }
@@ -804,12 +1006,13 @@ async function openViewer(id) {
   if (vwUrl) URL.revokeObjectURL(vwUrl);
   vwUrl = URL.createObjectURL(await getBlob(id + ':ann'));
   $('#vwImg').src = vwUrl;
-  $('#vwTitle').textContent = `#${p.nr} · ${p.project}`;
+  $('#vwTitle').textContent = `#${p.nr}  ${p.project}`;
+  const row = (i, ...c) => el('div', { class: 'row-i' }, ico(i), el('span', {}, ...c));
   $('#vwMeta').replaceChildren(
-    el('div', {}, `🕒 ${fmtDate(p.createdAt)} ${fmtTime(p.createdAt)}`),
-    el('div', {}, '📍 ', p.lat != null ? el('a', { href: mapUrl(p), target: '_blank', rel: 'noopener' }, locText(p)) : 'Geen locatie'),
-    p.tags.length ? el('div', {}, '🏷️ ' + p.tags.join(', ')) : null,
-    p.note ? el('div', { style: 'white-space:pre-wrap;margin-top:4px' }, p.note) : null,
+    row('clock', `${fmtDate(p.createdAt)}  ${fmtTime(p.createdAt)}`),
+    row('pin', p.lat != null ? el('a', { href: mapUrl(p), target: '_blank', rel: 'noopener' }, locText(p)) : 'Geen locatie'),
+    p.tags.length ? row('tag', p.tags.join(', ')) : null,
+    p.note ? el('div', { class: 'note' }, p.note) : null,
   );
   show('Viewer');
 }
@@ -828,7 +1031,7 @@ async function vwAction(act) {
       const ob = await getBlob(p.id + ':orig');
       deliverSheet([new File([ob], `${fileBase(p)}_origineel.${extOf(ob)}`, { type: ob.type || 'image/jpeg' })], 'Originele foto');
     } else if (act === 'delete') {
-      if (!confirm(`Foto #${p.nr} definitief verwijderen?`)) return;
+      if (!confirm(`Foto #${p.nr} definitief uit de app verwijderen?`)) return;
       await deletePhoto(p.id); show('Overview'); loadOverview(); toast('Verwijderd');
     }
   } catch (e) { alert('Mislukt: ' + e.message); }
@@ -836,6 +1039,7 @@ async function vwAction(act) {
 
 /* ---------------- koppelingen ---------------- */
 function wire() {
+  document.querySelectorAll('i[data-i]').forEach(e => e.replaceWith(ico(e.dataset.i)));
   $('#btnProject').onclick = () => pickProject();
   $('#btnSettings').onclick = openSettings;
   $('#btnGallery').onclick = () => $('#fileGallery').click();
@@ -844,9 +1048,13 @@ function wire() {
     S.torch = !S.torch;
     S.track?.applyConstraints({ advanced: [{ torch: S.torch }] }).catch(() => {});
   };
-  onTapOrHold($('#btnShutter'), () => capture(false), () => capture(true));
+  const sh = $('#btnShutter');
+  onTapOrHold(sh, () => capture(false), () => capture(true));
+  sh.addEventListener('pointerdown', () => setTimeout(() => { if (sh.matches(':active')) sh.classList.add('hold'); }, 350));
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => sh.addEventListener(ev, () => sh.classList.remove('hold')));
   $('#fileGallery').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'galerij'); };
   $('#fileCamera').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'camera'); };
+  $('#fileImport').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) importAnnotated(fs); };
 
   document.querySelectorAll('.tool[data-tool]').forEach(b => {
     b.addEventListener('pointerdown', e => e.preventDefault());
@@ -864,6 +1072,7 @@ function wire() {
 
   $('#ovBack').onclick = () => show('Camera');
   $('#ovSelect').onclick = () => setSelecting(!S.selecting);
+  $('#ovMenu').onclick = overviewMenu;
   $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.selected.clear(); loadOverview(); };
   $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
   $('#vwBack').onclick = () => { show('Overview'); loadOverview(); };
