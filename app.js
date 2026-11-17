@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.9';
+const APP_VERSION = '2.1';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  word: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8.5 12 1.2 5 1.3-3.5 1.3 3.5 1.2-5"/>',
   sort: '<path d="M3 6h18M6 12h12M10 18h4"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
@@ -946,7 +947,7 @@ function updateActions() {
   a.classList.toggle('selecting', S.selecting && n > 0);
   const label = S.selecting && n ? ` (${n})` : '';
   a.querySelectorAll('button').forEach(b => {
-    const base = { share: 'Delen', save: 'Opslaan', excel: 'Excel', pdf: 'PDF', zip: 'ZIP', delete: 'Wis' }[b.dataset.act];
+    const base = { share: 'Delen', save: 'Opslaan', excel: 'Excel', pdf: 'PDF', word: 'Word', zip: 'ZIP', delete: 'Wis' }[b.dataset.act];
     b.querySelector('span').textContent = base + (b.dataset.act === 'share' || b.dataset.act === 'delete' ? label : '');
   });
 }
@@ -1089,6 +1090,9 @@ async function ovAction(act) {
     } else if (act === 'pdf') {
       busy('PDF maken…'); const f = await buildPdf(list, filterNote()); busy();
       deliverSheet([f], 'PDF-verslag');
+    } else if (act === 'word') {
+      busy('Word maken…'); const f = await buildWord(list, filterNote()); busy();
+      deliverSheet([f], 'Word-verslag');
     } else if (act === 'zip') {
       busy('ZIP maken…'); const f = await buildZip(list, filterNote()); busy();
       deliverSheet([f], 'ZIP met alles');
@@ -1122,12 +1126,32 @@ async function buildExcel(list, note = '') {
   const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub]);
   return new File([blob], exportName(list) + '.xlsx', { type: blob.type });
 }
-async function buildPdf(list, note = '') {
+/* Oplijsting vooraan in PDF en Word: zoals Excel, tot en met Uur. */
+function reportTable(list) {
+  return {
+    headers: ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur'],
+    widths: [5, 17, 10, 52, 10, 6],
+    rows: list.map(p => [
+      String(p.nr), p.project,
+      p.tags.length ? { t: p.tags.join(', '), c: tagColor(p.tags[0]) } : '',
+      p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
+    ]),
+  };
+}
+async function reportImages(list) {
   const imgs = [];
   for (const p of list) imgs.push({ blob: await getBlob(p.id + ':ann'), w: p.annW, h: p.annH });
+  return imgs;
+}
+async function buildPdf(list, note = '') {
   const { title, sub } = reportTitle(list, note);
-  const blob = await makePdf(title, sub, imgs);
+  const blob = await makePdf(title, sub, await reportImages(list), reportTable(list));
   return new File([blob], exportName(list) + '.pdf', { type: 'application/pdf' });
+}
+async function buildWord(list, note = '') {
+  const { title, sub } = reportTitle(list, note);
+  const blob = await makeDocx(title, sub, await reportImages(list), reportTable(list));
+  return new File([blob], exportName(list) + '.docx', { type: blob.type });
 }
 async function buildZip(list, note = '') {
   const base = exportName(list);
@@ -1154,6 +1178,7 @@ async function openViewer(id, dir = 0) {
   await new Promise(res => { img.onload = img.onerror = res; img.src = url; });
   if (vwUrl) URL.revokeObjectURL(vwUrl);
   vwUrl = url;
+  resetZoom();
   img.style.transition = 'none';
   img.style.transform = dir ? `translateX(${dir * 40}%)` : '';
   img.style.opacity = dir ? '0' : '';
@@ -1178,22 +1203,92 @@ function snapBack() {
   const img = $('#vwImg');
   img.style.transition = 'transform .2s ease'; img.style.transform = '';
 }
+/* Zoomen in de foto: knijpen met twee vingers of dubbeltikken. Ingezoomd: één vinger verschuift.
+   Niet ingezoomd: vegen naar links/rechts = vorige/volgende foto. */
+const VZ = { s: 1, x: 0, y: 0 };
+function resetZoom() { VZ.s = 1; VZ.x = 0; VZ.y = 0; $('.viewer-img').classList.remove('zoomed'); }
 function wireSwipe() {
   const box = $('.viewer-img'), img = $('#vwImg');
-  let sx = null, sy = 0, dx = 0, horiz = null;
-  box.addEventListener('pointerdown', e => { sx = e.clientX; sy = e.clientY; dx = 0; horiz = null; img.style.transition = 'none'; });
-  box.addEventListener('pointermove', e => {
-    if (sx == null) return;
-    dx = e.clientX - sx;
-    if (horiz == null && Math.hypot(dx, e.clientY - sy) > 10) horiz = Math.abs(dx) > Math.abs(e.clientY - sy);
-    if (horiz) img.style.transform = `translateX(${dx}px)`;
+  const pts = new Map();
+  let one = null, pinch = null, lastTap = null;
+  const center = () => { const r = box.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const clampPan = () => {
+    const mx = Math.max(0, (img.clientWidth * VZ.s - box.clientWidth) / 2), my = Math.max(0, (img.clientHeight * VZ.s - box.clientHeight) / 2);
+    VZ.x = Math.min(mx, Math.max(-mx, VZ.x)); VZ.y = Math.min(my, Math.max(-my, VZ.y));
+  };
+  const apply = anim => {
+    img.style.transition = anim ? 'transform .2s ease' : 'none';
+    img.style.transform = VZ.s === 1 && !VZ.x && !VZ.y ? '' : `translate(${VZ.x}px, ${VZ.y}px) scale(${VZ.s})`;
+    box.classList.toggle('zoomed', VZ.s > 1);
+  };
+  const zoomAt = (s, mx, my, base = { s: VZ.s, x: VZ.x, y: VZ.y }, m0 = [mx, my]) => {
+    // het beeldpunt dat onder m0 lag, komt onder (mx, my) te liggen
+    const [cx, cy] = center();
+    VZ.s = s;
+    VZ.x = (mx - cx) - s * ((m0[0] - cx - base.x) / base.s);
+    VZ.y = (my - cy) - s * ((m0[1] - cy - base.y) / base.s);
+    if (s <= 1) { VZ.s = 1; VZ.x = 0; VZ.y = 0; }
+    clampPan();
+  };
+  box.addEventListener('pointerdown', e => {
+    if (e.target.closest('.vw-nav')) return;
+    try { box.setPointerCapture(e.pointerId); } catch { /* niet erg */ }
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], base: { ...VZ } };
+      if (one?.horiz && VZ.s === 1) snapBack();
+      one = null;
+    } else if (pts.size === 1) {
+      one = { sx: e.clientX, sy: e.clientY, base: { ...VZ }, dx: 0, horiz: null, t: Date.now(), moved: false };
+      img.style.transition = 'none';
+    }
   });
-  const end = () => {
-    if (sx == null) return; sx = null;
-    if (horiz && Math.abs(dx) > Math.min(90, box.clientWidth * 0.18)) {
+  box.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]), m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      zoomAt(Math.min(5, Math.max(1, pinch.base.s * d / pinch.d)), m[0], m[1], pinch.base, pinch.m);
+      apply(false); return;
+    }
+    if (!one) return;
+    const dx = e.clientX - one.sx, dy = e.clientY - one.sy;
+    if (Math.hypot(dx, dy) > 10) one.moved = true;
+    if (VZ.s > 1) { VZ.x = one.base.x + dx; VZ.y = one.base.y + dy; clampPan(); apply(false); return; }
+    one.dx = dx;
+    if (one.horiz == null && one.moved) one.horiz = Math.abs(dx) > Math.abs(dy);
+    if (one.horiz) img.style.transform = `translateX(${dx}px)`;
+  });
+  const end = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pinch) {
+      if (pts.size === 1) { // nog één vinger: verder verschuiven zonder sprong
+        const [p] = [...pts.values()];
+        one = { sx: p[0], sy: p[1], base: { ...VZ }, dx: 0, horiz: null, t: 0, moved: true };
+      }
+      if (pts.size < 2) pinch = null;
+      if (VZ.s < 1.05) { resetZoom(); apply(true); }
+      return;
+    }
+    const g = one; one = null;
+    if (!g || pts.size) return;
+    if (!g.moved && Date.now() - g.t < 300) { // dubbeltik: in- of uitzoomen
+      const now = Date.now();
+      if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40) {
+        if (VZ.s > 1) resetZoom(); else zoomAt(2.5, e.clientX, e.clientY);
+        apply(true); lastTap = null; return;
+      }
+      lastTap = { t: now, x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (VZ.s > 1) return;
+    if (g.horiz && Math.abs(g.dx) > Math.min(90, box.clientWidth * 0.18)) {
       img.style.transition = 'transform .15s ease, opacity .15s ease';
-      img.style.transform = `translateX(${dx < 0 ? -60 : 60}%)`; img.style.opacity = '0';
-      setTimeout(() => { if (!viewerStep(dx < 0 ? 1 : -1)) img.style.opacity = ''; }, 140);
+      img.style.transform = `translateX(${g.dx < 0 ? -60 : 60}%)`; img.style.opacity = '0';
+      setTimeout(() => { if (!viewerStep(g.dx < 0 ? 1 : -1)) img.style.opacity = ''; }, 140);
     } else snapBack();
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);

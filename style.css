@@ -195,7 +195,8 @@ img { -webkit-touch-callout:none; }
 .crop-bar .text-btn { flex:1; height:46px; }
 #scrEditor.cropping .tools, #scrEditor.cropping .tags, #scrEditor.cropping .note-row { display:none; }
 #scrEditor.cropping .crop-bar { display:flex; }
-.viewer-img { position:relative; overflow:hidden; touch-action:pan-y; }
+.viewer-img { position:relative; overflow:hidden; touch-action:none; }
+.viewer-img.zoomed .vw-nav { display:none; }
 .viewer-img img { will-change:transform; -webkit-user-drag:none; }
 .vw-nav { position:absolute; top:50%; transform:translateY(-50%); width:40px; height:40px; border-radius:20px; display:grid; place-items:center;
   background:rgba(20,20,22,.5); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); border:1px solid var(--line); color:#fff; }
