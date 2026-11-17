@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -23,6 +23,7 @@ const toBlob = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
 /* ---------------- iconen (lijnstijl) ---------------- */
 const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  camera: '<path d="M3.5 8.5a2 2 0 0 1 2-2h2.2l1.6-2.3h5.4l1.6 2.3h2.2a2 2 0 0 1 2 2v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.6"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   chevronLeft: '<path d="m15 18-6-6 6-6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
@@ -62,10 +63,8 @@ const S = {
   project: LS.get('project', ''),
   projects: LS.get('projects', []),
   tags: LS.get('tags', ['Defect', 'Opvolgen', 'OK', 'Vraag']),
-  camMode: LS.get('camMode', 'app'),
   autoDl: LS.get('autoDl', 'ann'), // 'off' | 'ann' | 'both'
-  pos: null, gpsWatch: null,
-  stream: null, track: null, torch: false, camStarting: false,
+  pos: null, gpsWatch: null, quickShot: false,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
   viewId: null,
@@ -152,8 +151,9 @@ function armBack() { if (!history.state?.inner) history.pushState({ inner: 1 }, 
 function show(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === 'scr' + name));
   S.screen = name;
-  if (name === 'Camera') { startCamera(); refreshCamBar(); }
-  else { stopCamera(); armBack(); }
+  if (name === 'Camera') refreshCamBar();
+  else armBack();
+  if (name !== 'Editor' && S.updateReady) location.reload();
 }
 window.addEventListener('popstate', () => {
   if (sheetOpen()) closeSheet(true);
@@ -248,59 +248,16 @@ async function processPending() {
   } finally { geoBusy = false; }
 }
 
-/* ---------------- camera ---------------- */
-async function startCamera() {
-  const v = $('#video'), msg = $('#camMsg');
-  if (S.camMode !== 'app') {
-    v.classList.add('hidden');
-    msg.textContent = 'Toestelcamera: tik op de ontspanknop om de camera van je gsm te openen.';
-    msg.classList.remove('hidden'); return;
-  }
-  if (S.stream || S.camStarting) return;
-  S.camStarting = true;
-  try {
-    const st = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } } });
-    if (S.screen !== 'Camera' || document.hidden) { st.getTracks().forEach(t => t.stop()); return; }
-    S.stream = st; S.track = st.getVideoTracks()[0];
-    v.srcObject = st; v.classList.remove('hidden'); msg.classList.add('hidden');
-    await v.play().catch(() => {});
-    const caps = S.track.getCapabilities?.() || {};
-    $('#btnTorch').classList.toggle('hidden', !caps.torch); S.torch = false;
-    if (caps.focusMode?.includes('continuous')) S.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-  } catch (e) {
-    v.classList.add('hidden');
-    msg.textContent = `Camera niet beschikbaar (${e.name}). Geef toestemming voor de camera, of kies een foto uit de galerij.`;
-    msg.classList.remove('hidden');
-  } finally { S.camStarting = false; }
-}
-function stopCamera() {
-  S.stream?.getTracks().forEach(t => t.stop());
-  S.stream = null; S.track = null; $('#video').srcObject = null;
-}
-function flash() { const f = $('#flash'); f.classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('on'))); }
-
+/* ---------------- camera: de gewone camera-app van de gsm ---------------- */
 async function ensureProject() {
   if (S.project) return true;
   return !!(await pickProject());
 }
-
-async function capture(quick) {
+function capture(quick) {
   $('#btnShutter').classList.remove('hold');
-  if (!(await ensureProject())) return;
-  const v = $('#video');
-  if (S.camMode !== 'app' || !S.stream || !v.videoWidth) { $('#fileCamera').click(); return; }
-  flash(); navigator.vibrate?.(15);
-  const c = document.createElement('canvas');
-  c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  const blob = await toBlob(c, 0.92);
-  const draft = newDraft(blob, { source: 'camera' });
-  if (quick) {
-    const bmp = await createImageBitmap(blob);
-    try { const rec = await saveDraft(draft, bmp); toast(`#${rec.nr} opgeslagen zonder notitie`); refreshCamBar(); autoExport(rec, blob, true); }
-    catch (e) { alert('Opslaan mislukt: ' + e.message); }
-    finally { bmp.close(); }
-  } else openEditor(draft);
+  if (!S.project) { ensureProject(); return; } // eerst project kiezen, daarna opnieuw tikken
+  S.quickShot = !!quick;
+  $('#fileCamera').click();
 }
 function newDraft(blob, { source, date, lat, lon, name } = {}) {
   const usePos = lat == null;
@@ -313,12 +270,22 @@ function newDraft(blob, { source, date, lat, lon, name } = {}) {
   };
 }
 async function importFile(f, source) {
+  const quick = source === 'camera' && S.quickShot; S.quickShot = false;
   if (!f) return;
   if (source === 'galerij' && await readMeta(f)) { await importAnnotated([f]); return; } // al een werfnotitie
   if (!(await ensureProject())) return;
   const ex = source === 'galerij' ? await readExif(f) : {};
   const draft = newDraft(f, { source, date: ex.date || (source === 'galerij' ? f.lastModified : Date.now()), lat: ex.lat, lon: ex.lon, name: f.name });
-  openEditor(draft);
+  if (!quick) { openEditor(draft); return; }
+  busy('Opslaan…');
+  let bmp;
+  try {
+    bmp = await createImageBitmap(f);
+    const rec = await saveDraft(draft, bmp);
+    busy(); toast(`#${rec.nr} opgeslagen zonder notitie`); refreshCamBar();
+    autoExport(rec, f, true);
+  } catch (e) { busy(); alert('Opslaan mislukt: ' + e.message); }
+  finally { bmp?.close(); }
 }
 
 async function refreshCamBar() {
@@ -372,9 +339,6 @@ function segControl(opts, current, onPick) {
   return seg;
 }
 async function openSettings() {
-  const camSeg = segControl([['app', 'In de app'], ['device', 'Toestelcamera']], S.camMode, m => {
-    S.camMode = m; LS.set('camMode', m); stopCamera(); startCamera();
-  });
   const dlSeg = segControl([['off', 'Uit'], ['ann', 'Met notitie'], ['both', '+ Origineel']], S.autoDl, v => {
     S.autoDl = v; LS.set('autoDl', v);
   });
@@ -386,15 +350,14 @@ async function openSettings() {
   const storage = el('p', {}, '…');
   openSheet(el('div', {},
     el('h3', {}, 'Instellingen'),
-    el('h4', {}, 'Camera'), camSeg,
-    el('p', {}, 'Toestelcamera geeft de hoogste kwaliteit, maar vraagt één tik extra om te bevestigen.'),
     el('h4', {}, 'Kopie automatisch in Downloads'), dlSeg,
-    el('p', {}, 'Na elke foto komt een kopie in de map Downloads, zichtbaar in je galerij. Vraagt Chrome om meerdere downloads toe te staan, kies dan Toestaan.'),
+    el('p', {}, 'Na elke foto komt een kopie in de map Downloads, zichtbaar in je galerij.'),
+    el('p', {}, 'Vraagt Chrome telkens om te bevestigen? Zet in Chrome → Instellingen → Downloads de optie "Vragen waar bestanden moeten worden opgeslagen" uit.'),
     el('h4', {}, 'Snelle tags'), tagInput,
     el('p', {}, 'Gescheiden door komma\'s.'),
     el('h4', {}, 'Opslag'), storage,
     el('h4', {}, 'Tips'),
-    el('p', {}, 'Lang drukken op de ontspanknop slaat de foto meteen op, zonder notitie.'),
+    el('p', {}, 'Lang drukken op de grote cameraknop: na de foto wordt die meteen opgeslagen, zonder notitiescherm.'),
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
     el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken.'),
     el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION),
@@ -911,27 +874,45 @@ async function downloadMany(files) {
   for (const f of files) { download(f); await sleep(350); }
   toast(`${plural(files.length, 'bestand', 'bestanden')} in Downloads`);
 }
-async function shareFiles(files, title) {
-  if (!navigator.canShare?.({ files })) return false;
-  try { await navigator.share({ files, title }); }
-  catch (e) {
-    if (e.name === 'AbortError') return true;
-    if (e.name === 'NotAllowedError') { deliverSheet(files, title); return true; } // tik verlopen: via knop opnieuw
-    throw e;
-  }
-  return true;
-}
-function deliverSheet(files, title) {
-  const canShare = navigator.canShare?.({ files });
+/* Delen via het deelmenu van Android (WhatsApp, Gmail, Outlook, Drive…).
+   Chrome laat maximaal 10 bestanden per keer delen: grotere reeksen gaan in porties. */
+const SHARE_MAX = 10;
+const canShareFiles = files => !!navigator.share && !!navigator.canShare?.({ files });
+function shareSheet(files, title, intro) {
+  const groups = [];
+  for (let i = 0; i < files.length; i += SHARE_MAX) groups.push(files.slice(i, i + SHARE_MAX));
+  const shareable = canShareFiles(groups[0]);
+  const btns = groups.map((g, i) => {
+    const label = groups.length === 1
+      ? (files.length === 1 ? 'Delen via WhatsApp, mail…' : `${plural(files.length, 'foto', 'foto\'s')} delen via WhatsApp, mail…`)
+      : `Deel ${i + 1} van ${groups.length}: foto ${i * SHARE_MAX + 1}–${i * SHARE_MAX + g.length}`;
+    const b = bigBtn('share', label, async () => {
+      try {
+        await navigator.share({ files: g, title });
+        b.classList.add('done'); b.firstChild.replaceWith(ico('check'));
+        if (groups.length === 1) closeSheet();
+      } catch (e) {
+        if (e.name !== 'AbortError') alert('Delen mislukt: ' + e.message);
+      }
+    });
+    return b;
+  });
   openSheet(el('div', {},
     el('h3', {}, title),
-    el('p', {}, files.length === 1 ? files[0].name : plural(files.length, 'bestand', 'bestanden')),
-    canShare ? bigBtn('share', 'Delen (WhatsApp, mail, Drive…)', async () => {
-      closeSheet();
-      try { await navigator.share({ files, title }); } catch (e) { if (e.name !== 'AbortError') downloadMany(files); }
-    }) : null,
+    intro ? el('p', {}, intro) : null,
+    groups.length > 1 && shareable ? el('p', {}, `Android deelt maximaal ${SHARE_MAX} bestanden per keer. Tik de knoppen na elkaar aan.`) : null,
+    shareable ? btns : el('p', {}, 'Dit bestandstype kan Chrome niet rechtstreeks delen. Sla het op en deel het daarna vanuit de app Bestanden (map Downloads).'),
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { closeSheet(); downloadMany(files); }),
   ));
+}
+const deliverSheet = (files, title) => shareSheet(files, title, files.length === 1 ? files[0].name : null);
+async function shareFiles(files, title) {
+  // Rechtstreeks het deelmenu openen als het kan; anders (te veel bestanden, tik verlopen) via het keuzemenu.
+  if (files.length <= SHARE_MAX && canShareFiles(files)) {
+    try { await navigator.share({ files, title }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  shareSheet(files, title);
 }
 
 async function ovAction(act) {
@@ -940,7 +921,7 @@ async function ovAction(act) {
   try {
     if (act === 'share') {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
-      if (!(await shareFiles(files, exportName(list)))) await downloadMany(files);
+      await shareFiles(files, exportName(list));
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
       await downloadMany(files);
@@ -993,6 +974,7 @@ async function buildZip(list) {
     files.push({ name: `${base}/origineel/${fileBase(p)}_origineel.${extOf(ob)}`, data: ob });
   }
   files.push({ name: `${base}/${base}.xlsx`, data: await buildExcel(list) });
+  files.push({ name: `${base}/${base}.pdf`, data: await buildPdf(list) });
   const blob = await makeZip(files);
   return new File([blob], base + '.zip', { type: 'application/zip' });
 }
@@ -1023,8 +1005,7 @@ async function vwAction(act) {
       const ob = await getBlob(p.id + ':orig');
       openEditor({ ...p, tags: [...p.tags], shapes: p.shapes.map(s => ({ ...s, pts: s.pts.map(q => [...q]) })), origBlob: ob, wantPos: false }, 'Viewer');
     } else if (act === 'share') {
-      const files = await annFiles([p]);
-      if (!(await shareFiles(files, fileBase(p)))) download(files[0]);
+      await shareFiles(await annFiles([p]), fileBase(p));
     } else if (act === 'save') {
       download((await annFiles([p]))[0]); toast('Opgeslagen in Downloads');
     } else if (act === 'orig') {
@@ -1044,10 +1025,6 @@ function wire() {
   $('#btnSettings').onclick = openSettings;
   $('#btnGallery').onclick = () => $('#fileGallery').click();
   $('#btnOverview').onclick = openOverview;
-  $('#btnTorch').onclick = () => {
-    S.torch = !S.torch;
-    S.track?.applyConstraints({ advanced: [{ torch: S.torch }] }).catch(() => {});
-  };
   const sh = $('#btnShutter');
   onTapOrHold(sh, () => capture(false), () => capture(true));
   sh.addEventListener('pointerdown', () => setTimeout(() => { if (sh.matches(':active')) sh.classList.add('hold'); }, 350));
@@ -1080,15 +1057,22 @@ function wire() {
   $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(true); });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { stopCamera(); stopGps(); }
-    else { startGps(); if (S.screen === 'Camera') startCamera(); }
+    if (document.hidden) stopGps(); else startGps();
   });
   window.addEventListener('online', processPending);
 }
 
 function init() {
   wire();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // Nieuwe versie actief geworden? Herladen zodra je niet aan het bewerken bent.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      if (S.screen === 'Editor') S.updateReady = true; else location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+  }
   startGps();
   show('Camera');
   if (!S.project) setTimeout(() => pickProject(), 400);

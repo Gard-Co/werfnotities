@@ -13,21 +13,20 @@
 <body>
 
 <!-- ============ CAMERA ============ -->
-<section id="scrCamera" class="screen active">
-  <video id="video" playsinline muted autoplay></video>
-  <div id="camMsg" class="cam-msg hidden"></div>
-  <div id="flash"></div>
+<section id="scrCamera" class="screen active home">
   <header class="cam-top">
     <button id="btnProject" class="chip"><span id="projName">Kies project</span><i data-i="chevronDown"></i></button>
     <span id="gps" class="gps bad" title="Geen GPS"><i></i><b>GPS</b></span>
-    <button id="btnTorch" class="glass hidden" aria-label="Zaklamp"><i data-i="flash"></i></button>
     <button id="btnSettings" class="glass" aria-label="Instellingen"><i data-i="settings"></i></button>
   </header>
-  <div class="hint">Lang drukken om op te slaan zonder notitie</div>
-  <footer class="cam-bottom">
-    <button id="btnGallery" class="glass lg" aria-label="Foto uit galerij"><i data-i="image"></i></button>
-    <button id="btnShutter" class="shutter" aria-label="Foto nemen"><span></span></button>
-    <button id="btnOverview" class="glass lg thumbbtn" aria-label="Overzicht"><i data-i="grid"></i><img id="lastThumb" alt="" hidden><span id="count"></span></button>
+  <div class="home-main">
+    <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
+    <div class="home-label">Foto nemen</div>
+    <div class="hint">Lang drukken: opslaan zonder notitie</div>
+  </div>
+  <footer class="home-bottom">
+    <button id="btnGallery" class="tile" aria-label="Foto uit galerij"><span class="tile-ic"><i data-i="image"></i></span><span>Uit galerij</span></button>
+    <button id="btnOverview" class="tile" aria-label="Overzicht"><span class="tile-ic thumbbtn"><i data-i="grid"></i><img id="lastThumb" alt="" hidden></span><span>Overzicht</span><span id="count"></span></button>
   </footer>
   <input type="file" id="fileGallery" accept="image/*" hidden>
   <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
