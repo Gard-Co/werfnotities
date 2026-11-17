@@ -83,7 +83,8 @@ function colName(i) {
   return s;
 }
 /* rows: array van arrays. Waarde mag string, number of {f: formule, v: tekst} zijn. */
-async function makeXlsx(headers, rows, colWidths) {
+async function makeXlsx(headers, rows, colWidths, titleLines = []) {
+  const T = titleLines.length ? titleLines.length + 1 : 0; // titelregels + lege regel boven de tabel
   const cell = (v, r, c, style) => {
     const ref = colName(c) + (r + 1);
     const s = style ? ` s="${style}"` : '';
@@ -92,20 +93,21 @@ async function makeXlsx(headers, rows, colWidths) {
     if (typeof v === 'object' && v.f) return `<c r="${ref}" t="str"${s}><f>${xmlEsc(v.f)}</f><v>${xmlEsc(v.v)}</v></c>`;
     return `<c r="${ref}" t="inlineStr"${s}><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
   };
-  let sd = '<row r="1">' + headers.map((h, c) => cell(h, 0, c, 1)).join('') + '</row>';
+  let sd = titleLines.map((t, i) => `<row r="${i + 1}"${i === 0 ? ' ht="24" customHeight="1"' : ''}>${cell(t, i, 0, i === 0 ? 4 : 5)}</row>`).join('');
+  sd += `<row r="${T + 1}">` + headers.map((h, c) => cell(h, T, c, 1)).join('') + '</row>';
   rows.forEach((row, ri) => {
-    sd += `<row r="${ri + 2}">` + row.map((v, c) => cell(v, ri + 1, c, typeof v === 'object' && v ? 3 : 2)).join('') + '</row>';
+    sd += `<row r="${T + ri + 2}">` + row.map((v, c) => cell(v, T + ri + 1, c, typeof v === 'object' && v ? 3 : 2)).join('') + '</row>';
   });
   const cols = '<cols>' + colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>';
-  const lastRef = colName(headers.length - 1) + (rows.length + 1);
+  const firstRef = 'A' + (T + 1), lastRef = colName(headers.length - 1) + (T + rows.length + 1);
   const NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const RNS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const PNS = 'http://schemas.openxmlformats.org/package/2006/relationships';
   const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
-  const sheet = `${head}<worksheet xmlns="${NS}" xmlns:r="${RNS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${sd}</sheetData><autoFilter ref="A1:${lastRef}"/></worksheet>`;
-  const absRef = '$' + colName(headers.length - 1) + '$' + (rows.length + 1);
-  const workbook = `${head}<workbook xmlns="${NS}" xmlns:r="${RNS}"><sheets><sheet name="Notities" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Notities!$A$1:${absRef}</definedName></definedNames></workbook>`;
-  const styles = `${head}<styleSheet xmlns="${NS}"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><u/><sz val="11"/><color rgb="FF0563C1"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFC107"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const sheet = `${head}<worksheet xmlns="${NS}" xmlns:r="${RNS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="${T + 1}" topLeftCell="A${T + 2}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${cols}<sheetData>${sd}</sheetData><autoFilter ref="${firstRef}:${lastRef}"/></worksheet>`;
+  const absRef = '$A$' + (T + 1) + ':$' + colName(headers.length - 1) + '$' + (T + rows.length + 1);
+  const workbook = `${head}<workbook xmlns="${NS}" xmlns:r="${RNS}"><sheets><sheet name="Notities" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Notities!${absRef}</definedName></definedNames></workbook>`;
+  const styles = `${head}<styleSheet xmlns="${NS}"><fonts count="5"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><u/><sz val="11"/><color rgb="FF0563C1"/><name val="Calibri"/></font><font><b/><sz val="16"/><name val="Calibri"/></font><font><sz val="10"/><color rgb="FF6B7280"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF3F3F46"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="top"/></xf><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   const types = `${head}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
   const rels = `${head}<Relationships xmlns="${PNS}"><Relationship Id="rId1" Type="${RNS}/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
   const wbRels = `${head}<Relationships xmlns="${PNS}"><Relationship Id="rId1" Type="${RNS}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${RNS}/styles" Target="styles.xml"/></Relationships>`;

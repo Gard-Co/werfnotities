@@ -22,7 +22,6 @@
   <div class="home-main">
     <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
     <div class="home-label">Foto nemen</div>
-    <div class="hint">Lang drukken: opslaan zonder notitie</div>
   </div>
   <footer class="home-bottom">
     <button id="btnGallery" class="tile" aria-label="Foto uit galerij"><span class="tile-ic"><i data-i="image"></i></span><span>Uit galerij</span></button>
@@ -48,8 +47,15 @@
       <button data-tool="circle" class="tool" aria-label="Cirkel"><i data-i="circle"></i></button>
       <button data-tool="pen" class="tool" aria-label="Vrij tekenen"><i data-i="pen"></i></button>
     </div>
-    <button id="edColor" class="tool" aria-label="Kleur"><span class="swatch"></span></button>
+    <button id="edColor" class="tool color-btn" aria-label="Kleur"><span class="swatch"></span><i data-i="chevronDown"></i></button>
+    <button id="edCrop" class="tool" aria-label="Bijsnijden"><i data-i="crop"></i></button>
     <button id="edUndo" class="tool" aria-label="Ongedaan maken"><i data-i="undo"></i></button>
+    <div id="colorPop" class="color-pop hidden"></div>
+  </div>
+  <div class="crop-bar">
+    <button id="cropCancel" class="text-btn">Annuleren</button>
+    <button id="cropReset" class="text-btn">Volledig</button>
+    <button id="cropDone" class="text-btn on">Bijsnijden</button>
   </div>
   <div class="tags" id="edTags"></div>
   <div class="note-row">
@@ -84,8 +90,13 @@
   <header class="bar">
     <button id="vwBack" class="ibtn" aria-label="Terug"><i data-i="chevronLeft"></i></button>
     <b id="vwTitle" class="bar-title"></b>
+    <span id="vwPos" class="vw-pos"></span>
   </header>
-  <div class="viewer-img"><img id="vwImg" alt=""></div>
+  <div class="viewer-img">
+    <img id="vwImg" alt="" draggable="false">
+    <button id="vwPrev" class="vw-nav prev" aria-label="Vorige"><i data-i="chevronLeft"></i></button>
+    <button id="vwNext" class="vw-nav next" aria-label="Volgende"><i data-i="chevronRight"></i></button>
+  </div>
   <div id="vwMeta" class="vw-meta"></div>
   <footer class="actions">
     <button data-vw="edit"><i data-i="edit"></i><span>Bewerk</span></button>

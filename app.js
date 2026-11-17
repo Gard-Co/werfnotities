@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -52,6 +52,8 @@ const ICONS = {
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+  chevronRight: '<path d="m9 18 6-6-6-6"/>',
 };
 function ico(name) {
   const t = document.createElement('template');
@@ -59,19 +61,22 @@ function ico(name) {
   return t.content.firstChild;
 }
 
+const DEFAULT_STATUS = ['NOK', 'ToDo', 'OK', 'Testen'];
+const OLD_TAGS = '["Defect","Opvolgen","OK","Vraag"]';
 const S = {
   project: LS.get('project', ''),
   projects: LS.get('projects', []),
-  tags: LS.get('tags', ['Defect', 'Opvolgen', 'OK', 'Vraag']),
+  tags: (t => (!t || JSON.stringify(t) === OLD_TAGS ? DEFAULT_STATUS : t))(LS.get('tags', null)),
   autoDl: LS.get('autoDl', 'ann'), // 'off' | 'ann' | 'both'
-  pos: null, gpsWatch: null, quickShot: false,
+  pos: null, gpsWatch: null,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
   viewId: null,
 };
-const TAG_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#14b8a6', '#a16207', '#64748b'];
-const tagColor = t => { const i = S.tags.indexOf(t); return TAG_COLORS[(i < 0 ? 7 : i) % TAG_COLORS.length]; };
-const COLORS = ['#ff3b30', '#ffcc00', '#ffffff', '#32d4ff'];
+const STATUS_COLORS = { nok: '#ef4444', todo: '#f97316', ok: '#22c55e', testen: '#3b82f6' };
+const TAG_COLORS = ['#a855f7', '#14b8a6', '#ec4899', '#64748b', '#84cc16', '#0ea5e9'];
+const tagColor = t => STATUS_COLORS[String(t).toLowerCase()] || TAG_COLORS[Math.max(0, S.tags.indexOf(t)) % TAG_COLORS.length];
+const COLORS = [['#ff3b30', 'Rood'], ['#ff9500', 'Oranje'], ['#ffd60a', 'Geel'], ['#34c759', 'Groen'], ['#0a84ff', 'Blauw'], ['#ffffff', 'Wit'], ['#000000', 'Zwart']];
 
 /* ---------------- opslag (IndexedDB) ---------------- */
 let _db;
@@ -157,7 +162,7 @@ function show(name) {
 }
 window.addEventListener('popstate', () => {
   if (sheetOpen()) closeSheet(true);
-  else if (S.screen === 'Editor') editorCancel();
+  else if (S.screen === 'Editor') { if (ED.cropMode) setCropMode(false); else editorCancel(); }
   else if (S.screen === 'Viewer') { show('Overview'); loadOverview(); }
   else if (S.screen === 'Overview') { if (S.selecting) setSelecting(false); else show('Camera'); }
   if (S.screen !== 'Camera' || sheetOpen()) armBack();
@@ -253,10 +258,8 @@ async function ensureProject() {
   if (S.project) return true;
   return !!(await pickProject());
 }
-function capture(quick) {
-  $('#btnShutter').classList.remove('hold');
+function capture() {
   if (!S.project) { ensureProject(); return; } // eerst project kiezen, daarna opnieuw tikken
-  S.quickShot = !!quick;
   $('#fileCamera').click();
 }
 function newDraft(blob, { source, date, lat, lon, name } = {}) {
@@ -265,27 +268,16 @@ function newDraft(blob, { source, date, lat, lon, name } = {}) {
   return {
     id: null, project: S.project, createdAt: date || Date.now(),
     lat: usePos ? (p?.lat ?? null) : lat, lon: usePos ? (p?.lon ?? null) : lon, acc: usePos ? (p?.acc ?? null) : null,
-    address: null, note: '', tags: [], shapes: [], source, origBlob: blob, origName: name || null,
+    address: null, note: '', tags: [], shapes: [], crop: null, source, origBlob: blob, origName: name || null,
     wantPos: usePos,
   };
 }
 async function importFile(f, source) {
-  const quick = source === 'camera' && S.quickShot; S.quickShot = false;
   if (!f) return;
   if (source === 'galerij' && await readMeta(f)) { await importAnnotated([f]); return; } // al een werfnotitie
   if (!(await ensureProject())) return;
   const ex = source === 'galerij' ? await readExif(f) : {};
-  const draft = newDraft(f, { source, date: ex.date || (source === 'galerij' ? f.lastModified : Date.now()), lat: ex.lat, lon: ex.lon, name: f.name });
-  if (!quick) { openEditor(draft); return; }
-  busy('Opslaan…');
-  let bmp;
-  try {
-    bmp = await createImageBitmap(f);
-    const rec = await saveDraft(draft, bmp);
-    busy(); toast(`#${rec.nr} opgeslagen zonder notitie`); refreshCamBar();
-    autoExport(rec, f, true);
-  } catch (e) { busy(); alert('Opslaan mislukt: ' + e.message); }
-  finally { bmp?.close(); }
+  openEditor(newDraft(f, { source, date: ex.date || (source === 'galerij' ? f.lastModified : Date.now()), lat: ex.lat, lon: ex.lon, name: f.name }));
 }
 
 async function refreshCamBar() {
@@ -308,7 +300,7 @@ function pickProject() {
   return new Promise(res => {
     let done = false;
     const finish = v => { if (done) return; done = true; res(v); };
-    const input = el('input', { type: 'text', placeholder: 'Nieuw project, bv. Kerkstraat 12', enterkeyhint: 'done', autocapitalize: 'sentences' });
+    const input = el('input', { type: 'text', placeholder: 'Nieuw project', enterkeyhint: 'done', autocapitalize: 'sentences' });
     const choose = p => { setProject(p); closeSheet(); finish(p); };
     const add = () => { const v = input.value.trim(); if (v) choose(v); };
     input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
@@ -316,7 +308,9 @@ function pickProject() {
       const row = el('div', { class: 'row' + (p === S.project ? ' on' : '') },
         el('button', { class: 'row-main', onclick: () => choose(p) }, p, p === S.project ? ico('check') : null),
         el('button', { class: 'row-x', 'aria-label': 'Uit lijst halen', onclick: () => {
+          if (!confirm(`Project "${p}" uit de lijst verwijderen?\n\nDe foto's van dit project blijven bewaard.`)) return;
           S.projects = S.projects.filter(x => x !== p); LS.set('projects', S.projects); row.remove();
+          if (S.project === p) { S.project = ''; LS.set('project', ''); refreshCamBar(); }
         } }, ico('x')));
       return row;
     });
@@ -345,7 +339,7 @@ async function openSettings() {
   const tagInput = el('input', { type: 'text', value: S.tags.join(', ') });
   tagInput.addEventListener('change', () => {
     const t = tagInput.value.split(',').map(s => s.trim()).filter(Boolean);
-    S.tags = [...new Set(t)]; LS.set('tags', S.tags); toast('Tags bewaard');
+    S.tags = t.length ? [...new Set(t)] : DEFAULT_STATUS; LS.set('tags', S.tags); toast('Statussen bewaard');
   });
   const storage = el('p', {}, '…');
   openSheet(el('div', {},
@@ -353,13 +347,12 @@ async function openSettings() {
     el('h4', {}, 'Kopie automatisch in Downloads'), dlSeg,
     el('p', {}, 'Na elke foto komt een kopie in de map Downloads, zichtbaar in je galerij.'),
     el('p', {}, 'Vraagt Chrome telkens om te bevestigen? Zet in Chrome → Instellingen → Downloads de optie "Vragen waar bestanden moeten worden opgeslagen" uit.'),
-    el('h4', {}, 'Snelle tags'), tagInput,
-    el('p', {}, 'Gescheiden door komma\'s.'),
+    el('h4', {}, 'Statussen'), tagInput,
+    el('p', {}, 'Gescheiden door komma\'s. NOK is rood, ToDo oranje, OK groen en Testen blauw.'),
     el('h4', {}, 'Opslag'), storage,
     el('h4', {}, 'Tips'),
-    el('p', {}, 'Lang drukken op de grote cameraknop: na de foto wordt die meteen opgeslagen, zonder notitiescherm.'),
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
-    el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken.'),
+    el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken. In een geopende foto veeg je naar links of rechts voor de volgende.'),
     el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION),
   ));
   try {
@@ -371,13 +364,17 @@ async function openSettings() {
 }
 
 /* ---------------- editor ---------------- */
-const ED = { draft: null, bmp: null, tool: 'arrow', color: COLORS[0], cur: null, fit: null, dirty: false, returnTo: 'Camera' };
+const ED = { draft: null, bmp: null, tool: 'arrow', color: COLORS[0][0], cur: null, fit: null, src: null, dirty: false, returnTo: 'Camera',
+  cropMode: false, cropRect: null, cropDrag: null };
 const cv = $('#edCanvas');
+const FULL = { x: 0, y: 0, w: 1, h: 1 };
+const cropOf = d => d.crop || FULL;
 
 async function openEditor(draft, returnTo = 'Camera') {
   try { ED.bmp = await createImageBitmap(draft.origBlob); }
   catch { alert('Deze foto kan niet geopend worden (formaat niet ondersteund, bv. HEIC).'); return; }
   ED.draft = draft; ED.dirty = false; ED.cur = null; ED.returnTo = returnTo;
+  setCropMode(false);
   $('#edNote').value = draft.note || '';
   show('Editor');
   renderTags(); updateEdInfo(); setColor(ED.color); layoutCanvas();
@@ -397,17 +394,41 @@ function layoutCanvas() {
   const dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   cv.style.width = r.width + 'px'; cv.style.height = r.height + 'px';
-  const b = ED.bmp, sc = Math.min(cv.width / b.width, cv.height / b.height);
-  const w = b.width * sc, h = b.height * sc;
+  const b = ED.bmp;
+  // Normaal: enkel het bijgesneden stuk tonen. Bijsnijden: de volledige foto met wat marge voor de hoekgrepen.
+  const c = ED.cropMode ? FULL : cropOf(ED.draft);
+  ED.src = { x: c.x * b.width, y: c.y * b.height, w: c.w * b.width, h: c.h * b.height };
+  const m = ED.cropMode ? 22 * dpr : 0;
+  const sc = Math.min((cv.width - 2 * m) / ED.src.w, (cv.height - 2 * m) / ED.src.h);
+  const w = ED.src.w * sc, h = ED.src.h * sc;
   ED.fit = { x: (cv.width - w) / 2, y: (cv.height - h) / 2, w, h };
   drawEditor();
 }
 function drawEditor() {
   if (!ED.bmp || !ED.fit) return;
-  const ctx = cv.getContext('2d'), f = ED.fit;
+  const ctx = cv.getContext('2d'), f = ED.fit, s = ED.src;
   ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.drawImage(ED.bmp, f.x, f.y, f.w, f.h);
-  drawShapes(ctx, ED.cur ? [...ED.draft.shapes, ED.cur] : ED.draft.shapes, f.x, f.y, f.w, f.h);
+  ctx.drawImage(ED.bmp, s.x, s.y, s.w, s.h, f.x, f.y, f.w, f.h);
+  if (!ED.cropMode) { drawShapes(ctx, ED.cur ? [...ED.draft.shapes, ED.cur] : ED.draft.shapes, f.x, f.y, f.w, f.h); return; }
+  // bijsnijden: tekeningen op hun plaats tonen, buiten het kader verduisteren, kader + grepen
+  const c = cropOf(ED.draft);
+  drawShapes(ctx, ED.draft.shapes, f.x + c.x * f.w, f.y + c.y * f.h, c.w * f.w, c.h * f.h);
+  const r = ED.cropRect, rx = f.x + r.x * f.w, ry = f.y + r.y * f.h, rw = r.w * f.w, rh = r.h * f.h;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.6)';
+  ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height); ctx.rect(rx, ry, rw, rh); ctx.fill('evenodd');
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = dpr;
+  ctx.beginPath();
+  for (const k of [1, 2]) { ctx.moveTo(rx + rw * k / 3, ry); ctx.lineTo(rx + rw * k / 3, ry + rh); ctx.moveTo(rx, ry + rh * k / 3); ctx.lineTo(rx + rw, ry + rh * k / 3); }
+  ctx.stroke();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * dpr; ctx.strokeRect(rx, ry, rw, rh);
+  const L = 20 * dpr; ctx.lineWidth = 4 * dpr; ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (const [px, py, dx, dy] of [[rx, ry, 1, 1], [rx + rw, ry, -1, 1], [rx, ry + rh, 1, -1], [rx + rw, ry + rh, -1, -1]]) {
+    ctx.moveTo(px + dx * L, py); ctx.lineTo(px, py); ctx.lineTo(px, py + dy * L);
+  }
+  ctx.stroke(); ctx.restore();
 }
 new ResizeObserver(() => { if (S.screen === 'Editor') layoutCanvas(); }).observe($('#stage'));
 
@@ -417,31 +438,96 @@ function toNorm(e, clamp) {
   if (!clamp && (x < 0 || x > 1 || y < 0 || y > 1)) return null;
   return [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))];
 }
+
+/* bijsnijden */
+function setCropMode(on) {
+  ED.cropMode = on; ED.cropDrag = null;
+  if (on) { $('#edNote').blur(); ED.cropRect = { ...cropOf(ED.draft) }; closeColorPop(); }
+  $('#scrEditor').classList.toggle('cropping', on);
+  layoutCanvas();
+}
+function applyCrop() {
+  const d = ED.draft, o = cropOf(d), n = ED.cropRect;
+  const same = Math.abs(o.x - n.x) + Math.abs(o.y - n.y) + Math.abs(o.w - n.w) + Math.abs(o.h - n.h) < 1e-4;
+  if (!same) {
+    // tekeningen omrekenen naar het nieuwe kader
+    d.shapes.forEach(s => { s.pts = s.pts.map(([u, v]) => [(o.x + u * o.w - n.x) / n.w, (o.y + v * o.h - n.y) / n.h]); });
+    d.crop = n.x < 0.002 && n.y < 0.002 && n.w > 0.996 && n.h > 0.996 ? null : n;
+    ED.dirty = true;
+  }
+  setCropMode(false);
+}
+function cropDown(e) {
+  const r = cv.getBoundingClientRect(), k = cv.width / r.width, f = ED.fit, c = ED.cropRect;
+  const px = (e.clientX - r.left) * k, py = (e.clientY - r.top) * k, tol = 26 * (window.devicePixelRatio || 1);
+  const L = f.x + c.x * f.w, R = L + c.w * f.w, T = f.y + c.y * f.h, B = T + c.h * f.h;
+  const inY = py > T - tol && py < B + tol, inX = px > L - tol && px < R + tol;
+  const edge = { l: inY && Math.abs(px - L) < tol, r: inY && Math.abs(px - R) < tol, t: inX && Math.abs(py - T) < tol, b: inX && Math.abs(py - B) < tol };
+  const any = edge.l || edge.r || edge.t || edge.b;
+  if (!any && !(px > L && px < R && py > T && py < B)) return;
+  cv.setPointerCapture(e.pointerId);
+  ED.cropDrag = { edge: any ? edge : null, start: toNorm(e, true), rect: { ...c } };
+}
+function cropMove(e) {
+  const g = ED.cropDrag; if (!g) return;
+  const p = toNorm(e, true), dx = p[0] - g.start[0], dy = p[1] - g.start[1], o = g.rect, MIN = 0.08;
+  let { x, y, w, h } = o;
+  if (!g.edge) {
+    x = Math.min(1 - w, Math.max(0, o.x + dx)); y = Math.min(1 - h, Math.max(0, o.y + dy));
+  } else {
+    let l = o.x, r = o.x + o.w, t = o.y, b = o.y + o.h;
+    if (g.edge.l) l = Math.min(r - MIN, Math.max(0, l + dx));
+    if (g.edge.r) r = Math.max(l + MIN, Math.min(1, r + dx));
+    if (g.edge.t) t = Math.min(b - MIN, Math.max(0, t + dy));
+    if (g.edge.b) b = Math.max(t + MIN, Math.min(1, b + dy));
+    x = l; y = t; w = r - l; h = b - t;
+  }
+  ED.cropRect = { x, y, w, h }; drawEditor();
+}
+
 cv.addEventListener('pointerdown', e => {
   if (document.activeElement === $('#edNote')) { $('#edNote').blur(); e.preventDefault(); return; } // eerste tik sluit toetsenbord
+  closeColorPop();
+  if (ED.cropMode) { cropDown(e); return; }
   const p = toNorm(e); if (!p) return;
   cv.setPointerCapture(e.pointerId);
   ED.cur = { type: ED.tool, color: ED.color, pts: ED.tool === 'pen' ? [p] : [p, p] };
   drawEditor();
 });
 cv.addEventListener('pointermove', e => {
+  if (ED.cropMode) { cropMove(e); return; }
   if (!ED.cur) return;
   const p = toNorm(e, true);
   if (ED.cur.type === 'pen') ED.cur.pts.push(p); else ED.cur.pts[1] = p;
   drawEditor();
 });
 cv.addEventListener('pointerup', () => {
+  if (ED.cropMode) { ED.cropDrag = null; return; }
   const s = ED.cur; if (!s) return; ED.cur = null;
   const a = s.pts[0], b = s.pts[s.pts.length - 1];
   const big = s.type === 'pen' ? s.pts.length > 2 : Math.hypot((b[0] - a[0]) * ED.fit.w, (b[1] - a[1]) * ED.fit.h) > 14 * (window.devicePixelRatio || 1);
   if (big) { ED.draft.shapes.push(s); ED.dirty = true; }
   drawEditor();
 });
-cv.addEventListener('pointercancel', () => { ED.cur = null; drawEditor(); });
+cv.addEventListener('pointercancel', () => { ED.cur = null; ED.cropDrag = null; drawEditor(); });
+
+/* kleurkeuze */
+function openColorPop() {
+  const pop = $('#colorPop');
+  pop.replaceChildren(...COLORS.map(([c, n]) => {
+    const b = el('button', { class: 'cp-item' + (c === ED.color ? ' on' : ''), onclick: () => { setColor(c); closeColorPop(); } },
+      el('span', { class: 'swatch', style: `--sw:${c}` }), n, c === ED.color ? ico('check') : null);
+    b.addEventListener('pointerdown', e => e.preventDefault());
+    return b;
+  }));
+  pop.classList.remove('hidden');
+}
+function closeColorPop() { $('#colorPop')?.classList.add('hidden'); }
 
 function drawShapes(ctx, shapes, x, y, w, h) {
   const lw = Math.max(2, Math.min(w, h) * 0.011);
   ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   for (const s of shapes) {
     const P = s.pts.map(([u, v]) => [x + u * w, y + v * h]);
     ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = lw;
@@ -472,8 +558,8 @@ function renderTags() {
     const on = ED.draft.tags.includes(t);
     const b = el('button', { class: 'tag' + (on ? ' on' : ''), style: `--c:${tagColor(t)}` }, t);
     b.addEventListener('pointerdown', e => e.preventDefault()); // toetsenbord open houden
-    b.addEventListener('click', () => {
-      const a = ED.draft.tags, i = a.indexOf(t); i < 0 ? a.push(t) : a.splice(i, 1);
+    b.addEventListener('click', () => { // één status per foto; nogmaals tikken = geen status
+      ED.draft.tags = ED.draft.tags.includes(t) ? [] : [t];
       ED.dirty = true; renderTags();
     });
     box.append(b);
@@ -545,7 +631,7 @@ async function saveDraft(d, bmp) {
   }
   const rec = {
     id: d.id, project: d.project, nr: d.nr, createdAt: d.createdAt, savedAt: Date.now(),
-    lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], shapes: d.shapes,
+    lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], shapes: d.shapes, crop: d.crop || null,
     source: d.source, origName: d.origName, origType: d.origBlob?.type || 'image/jpeg', origW: bmp.width, origH: bmp.height,
     imported: d.imported || false,
   };
@@ -596,42 +682,46 @@ function ellipsize(ctx, t, maxW) {
 }
 async function renderAnnotated(bmp, rec) {
   const MAX = 1600;
-  const sc = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
-  const W = Math.round(bmp.width * sc), IH = Math.round(bmp.height * sc);
-  const fs = Math.max(14, Math.round(Math.min(W, IH) * 0.034)), sfs = Math.round(fs * 0.78);
-  const pad = Math.round(fs * 0.75), gap = Math.round(fs * 0.4);
+  const cr = rec.crop || FULL;
+  const sx = cr.x * bmp.width, sy = cr.y * bmp.height, sw = cr.w * bmp.width, sh = cr.h * bmp.height;
+  const sc = Math.min(1, MAX / Math.max(sw, sh));
+  const W = Math.max(1, Math.round(sw * sc)), IH = Math.max(1, Math.round(sh * sc));
+  const fs = Math.max(14, Math.round(Math.min(W, IH) * 0.034)), sfs = Math.round(fs * 0.74);
+  const pad = Math.round(fs * 0.75), gap = Math.round(fs * 0.45);
   const m = document.createElement('canvas').getContext('2d');
   m.font = FONT(fs);
   const noteLines = rec.note ? wrapText(m, rec.note, W - 2 * pad) : [];
-  const L1 = fs * 1.3, L2 = sfs * 1.45, LT = rec.tags.length ? fs * 1.25 : 0, LN = fs * 1.32;
-  const barH = Math.round(pad + L1 + gap * 0.3 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
+  const L1 = fs * 1.25, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
+  const barH = Math.round(pad + L1 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
 
   const c = document.createElement('canvas'); c.width = W; c.height = IH + barH;
   const ctx = c.getContext('2d');
-  ctx.drawImage(bmp, 0, 0, W, IH);
+  ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, W, IH);
   drawShapes(ctx, rec.shapes, 0, 0, W, IH);
   ctx.fillStyle = '#111113'; ctx.fillRect(0, IH, W, barH);
-  ctx.fillStyle = '#f5b400'; ctx.fillRect(0, IH, W, Math.max(2, Math.round(fs * 0.08)));
-  ctx.textBaseline = 'top';
   let y = IH + pad;
-  // regel 1: #nr  project ......... datum uur
-  ctx.font = FONT(fs, 700); ctx.fillStyle = '#f5b400';
-  const nrTxt = `#${rec.nr}`; ctx.fillText(nrTxt, pad, y);
-  const x = pad + ctx.measureText(nrTxt).width + fs * 0.55;
-  ctx.font = FONT(fs, 400); ctx.fillStyle = '#a1a1aa';
+  // regel 1: #nr project · speld adres ............ datum uur  (adres, datum en uur in kleinere letters)
+  ctx.textBaseline = 'alphabetic';
+  const base = y + fs * 0.98, grey = '#a1a1aa';
+  ctx.font = FONT(sfs, 400);
   const dt = `${fmtDate(rec.createdAt)}  ${fmtTime(rec.createdAt)}`, dtW = ctx.measureText(dt).width;
-  ctx.fillText(dt, W - pad - dtW, y);
-  ctx.font = FONT(fs, 600); ctx.fillStyle = '#ffffff';
-  ctx.fillText(ellipsize(ctx, rec.project, W - pad - dtW - fs - x), x, y);
-  y += L1 + gap * 0.3;
-  // regel 2: locatie met speld-icoon
-  const ps = sfs / 24;
-  ctx.save(); ctx.translate(pad - ps, y - ps * 1.5); ctx.scale(ps * 1.05, ps * 1.05);
-  ctx.strokeStyle = '#a1a1aa'; ctx.lineWidth = 2; ctx.stroke(PIN); ctx.restore();
-  ctx.font = FONT(sfs, 400); ctx.fillStyle = '#a1a1aa';
-  ctx.fillText(ellipsize(ctx, locText(rec), W - 2 * pad - sfs * 1.3), pad + sfs * 1.25, y);
-  y += L2;
-  // tags
+  ctx.fillStyle = grey; ctx.fillText(dt, W - pad - dtW, base);
+  const right = W - pad - dtW - fs * 0.8;
+  ctx.font = FONT(fs, 700); ctx.fillStyle = '#ffffff';
+  const head = ellipsize(ctx, `#${rec.nr}  ${rec.project}`, Math.max(fs * 3, (right - pad) * 0.55));
+  ctx.fillText(head, pad, base);
+  let x = pad + ctx.measureText(head).width + fs * 0.75;
+  if (right - x > sfs * 4) {
+    const ps = sfs * 1.05 / 24;
+    ctx.save(); ctx.translate(x - 4 * ps, base - sfs * 0.9 - 2 * ps); ctx.scale(ps, ps);
+    ctx.strokeStyle = grey; ctx.lineWidth = 2.2; ctx.stroke(PIN); ctx.restore();
+    x += sfs * 1.05;
+    ctx.font = FONT(sfs, 400); ctx.fillStyle = grey;
+    ctx.fillText(ellipsize(ctx, locText(rec), right - x), x, base);
+  }
+  y += L1;
+  ctx.textBaseline = 'top';
+  // status
   if (LT) {
     y += gap;
     const tfs = Math.round(fs * 0.72); ctx.font = FONT(tfs, 600);
@@ -834,8 +924,6 @@ async function closeProject(proj) {
   let zip;
   try { zip = await buildZip(list); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
   busy();
-  const files = [zip];
-  const canShare = navigator.canShare?.({ files });
   const delBtn = bigBtn('trash', `${plural(list.length, 'foto', 'foto\'s')} uit de app wissen`, async () => {
     if (!confirm(`Alle ${plural(list.length, 'foto', 'foto\'s')} van "${proj}" uit de app wissen?\n\nDe ZIP en de kopieën in Downloads blijven bestaan.`)) return;
     closeSheet(); busy('Wissen…');
@@ -850,13 +938,10 @@ async function closeProject(proj) {
   const saved = () => { delBtn.disabled = false; };
   openSheet(el('div', {},
     el('h3', {}, `Project "${proj}" afsluiten`),
-    el('p', {}, `${plural(list.length, 'foto', 'foto\'s')} · ZIP met originelen, foto's met notitie en Excel · ${(zip.size / 1048576).toFixed(1)} MB`),
+    el('p', {}, `${plural(list.length, 'foto', 'foto\'s')} · ZIP met originelen, foto's met notitie, Excel en PDF · ${(zip.size / 1048576).toFixed(1)} MB`),
     el('h4', {}, 'Stap 1 · Bewaar de ZIP'),
-    canShare ? bigBtn('share', 'Delen (Drive, mail…)', async () => {
-      try { await navigator.share({ files, title: zip.name }); saved(); }
-      catch (e) { if (e.name !== 'AbortError') { download(zip); saved(); } }
-    }) : null,
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { download(zip); saved(); }),
+    el('p', {}, SHARE_HINT),
     el('h4', {}, 'Stap 2 · Opruimen'),
     delBtn,
     el('p', {}, 'Wissen kan pas nadat je de ZIP bewaard hebt.'),
@@ -877,8 +962,21 @@ async function downloadMany(files) {
 /* Delen via het deelmenu van Android (WhatsApp, Gmail, Outlook, Drive…).
    Chrome laat maximaal 10 bestanden per keer delen: grotere reeksen gaan in porties. */
 const SHARE_MAX = 10;
-const canShareFiles = files => !!navigator.share && !!navigator.canShare?.({ files });
+// Android-browsers laten enkel foto's en PDF delen; ZIP en Excel geven "Permission denied".
+const shareableType = f => /^image\//.test(f.type) || f.type === 'application/pdf';
+const canShareFiles = files => files.every(shareableType) && !!navigator.share && !!navigator.canShare?.({ files });
+const SHARE_HINT = 'Delen via WhatsApp of mail: open de app Bestanden → Downloads, druk lang op het bestand en kies Delen.';
+function savedSheet(files, title) {
+  downloadMany(files);
+  openSheet(el('div', {},
+    el('h3', {}, title),
+    el('p', {}, `${files.map(f => f.name).join(', ')} staat in de map Downloads.`),
+    el('p', {}, SHARE_HINT),
+    bigBtn('check', 'OK', () => closeSheet()),
+  ));
+}
 function shareSheet(files, title, intro) {
+  if (!files.every(shareableType)) { savedSheet(files, title); return; }
   const groups = [];
   for (let i = 0; i < files.length; i += SHARE_MAX) groups.push(files.slice(i, i + SHARE_MAX));
   const shareable = canShareFiles(groups[0]);
@@ -892,7 +990,8 @@ function shareSheet(files, title, intro) {
         b.classList.add('done'); b.firstChild.replaceWith(ico('check'));
         if (groups.length === 1) closeSheet();
       } catch (e) {
-        if (e.name !== 'AbortError') alert('Delen mislukt: ' + e.message);
+        if (e.name === 'AbortError') return;
+        closeSheet(); savedSheet(g, 'Delen lukt niet in deze browser');
       }
     });
     return b;
@@ -901,7 +1000,7 @@ function shareSheet(files, title, intro) {
     el('h3', {}, title),
     intro ? el('p', {}, intro) : null,
     groups.length > 1 && shareable ? el('p', {}, `Android deelt maximaal ${SHARE_MAX} bestanden per keer. Tik de knoppen na elkaar aan.`) : null,
-    shareable ? btns : el('p', {}, 'Dit bestandstype kan Chrome niet rechtstreeks delen. Sla het op en deel het daarna vanuit de app Bestanden (map Downloads).'),
+    shareable ? btns : el('p', {}, 'Deze browser kan niet rechtstreeks delen. Sla op en deel daarna vanuit de app Bestanden (map Downloads). Chrome werkt hier het best.'),
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { closeSheet(); downloadMany(files); }),
   ));
 }
@@ -910,7 +1009,10 @@ async function shareFiles(files, title) {
   // Rechtstreeks het deelmenu openen als het kan; anders (te veel bestanden, tik verlopen) via het keuzemenu.
   if (files.length <= SHARE_MAX && canShareFiles(files)) {
     try { await navigator.share({ files, title }); return; }
-    catch (e) { if (e.name === 'AbortError') return; }
+    catch (e) {
+      if (e.name === 'AbortError') return;
+      if (e.name === 'NotAllowedError' && files.length > 0) { savedSheet(files, 'Delen lukt niet in deze browser'); return; }
+    }
   }
   shareSheet(files, title);
 }
@@ -930,7 +1032,7 @@ async function ovAction(act) {
       deliverSheet([f], 'Excel-export');
     } else if (act === 'pdf') {
       busy('PDF maken…'); const f = await buildPdf(list); busy();
-      deliverSheet([f], 'PDF-werfverslag');
+      deliverSheet([f], 'PDF-verslag');
     } else if (act === 'zip') {
       busy('ZIP maken…'); const f = await buildZip(list); busy();
       deliverSheet([f], 'ZIP met alles');
@@ -944,24 +1046,30 @@ async function ovAction(act) {
 }
 
 /* ---------------- exports ---------------- */
+function reportTitle(list) {
+  const projs = [...new Set(list.map(p => p.project))];
+  const times = list.map(p => p.createdAt);
+  const from = fmtDate(Math.min(...times)), to = fmtDate(Math.max(...times));
+  return {
+    title: 'Verslag – ' + (projs.length === 1 ? projs[0] : projs.join(', ')),
+    sub: `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}`,
+  };
+}
 async function buildExcel(list) {
-  const headers = ['Nr', 'Project', 'Tags', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
+  const headers = ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
+  const { title, sub } = reportTitle(list);
   const rows = list.map(p => [
     p.nr, p.project, p.tags.join(', '), p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
     p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
     fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '',
   ]);
-  const blob = await makeXlsx(headers, rows, [6, 20, 16, 50, 11, 7, 34, 34, 38, 12]);
+  const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub]);
   return new File([blob], exportName(list) + '.xlsx', { type: blob.type });
 }
 async function buildPdf(list) {
   const imgs = [];
   for (const p of list) imgs.push({ blob: await getBlob(p.id + ':ann'), w: p.annW, h: p.annH });
-  const projs = [...new Set(list.map(p => p.project))];
-  const times = list.map(p => p.createdAt);
-  const from = fmtDate(Math.min(...times)), to = fmtDate(Math.max(...times));
-  const title = 'Werfverslag – ' + (projs.length === 1 ? projs[0] : projs.join(', '));
-  const sub = `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}`;
+  const { title, sub } = reportTitle(list);
   const blob = await makePdf(title, sub, imgs);
   return new File([blob], exportName(list) + '.pdf', { type: 'application/pdf' });
 }
@@ -981,22 +1089,64 @@ async function buildZip(list) {
 
 /* ---------------- detail ---------------- */
 let vwUrl;
-async function openViewer(id) {
+async function openViewer(id, dir = 0) {
   const p = await getPhoto(id);
   if (!p) { show('Overview'); loadOverview(); return; }
   S.viewId = id;
+  const url = URL.createObjectURL(await getBlob(id + ':ann'));
+  const img = $('#vwImg');
+  await new Promise(res => { img.onload = img.onerror = res; img.src = url; });
   if (vwUrl) URL.revokeObjectURL(vwUrl);
-  vwUrl = URL.createObjectURL(await getBlob(id + ':ann'));
-  $('#vwImg').src = vwUrl;
+  vwUrl = url;
+  img.style.transition = 'none';
+  img.style.transform = dir ? `translateX(${dir * 40}%)` : '';
+  img.style.opacity = dir ? '0' : '';
+  if (dir) {
+    void img.offsetWidth; // startpositie vastleggen, daarna inschuiven
+    img.style.transition = 'transform .22s ease, opacity .22s ease'; img.style.transform = ''; img.style.opacity = '';
+  }
+  const i = S.list.findIndex(x => x.id === id);
   $('#vwTitle').textContent = `#${p.nr}  ${p.project}`;
+  $('#vwPos').textContent = i >= 0 && S.list.length > 1 ? `${i + 1} / ${S.list.length}` : '';
+  $('#vwPrev').disabled = i <= 0; $('#vwNext').disabled = i < 0 || i >= S.list.length - 1;
   const row = (i, ...c) => el('div', { class: 'row-i' }, ico(i), el('span', {}, ...c));
-  $('#vwMeta').replaceChildren(
+  $('#vwMeta').replaceChildren(...[
     row('clock', `${fmtDate(p.createdAt)}  ${fmtTime(p.createdAt)}`),
     row('pin', p.lat != null ? el('a', { href: mapUrl(p), target: '_blank', rel: 'noopener' }, locText(p)) : 'Geen locatie'),
-    p.tags.length ? row('tag', p.tags.join(', ')) : null,
+    p.tags.length ? row('tag', ...p.tags.map(t => el('span', { class: 'st', style: `--c:${tagColor(t)}` }, t))) : null,
     p.note ? el('div', { class: 'note' }, p.note) : null,
-  );
-  show('Viewer');
+  ].filter(Boolean));
+  if (S.screen !== 'Viewer') show('Viewer');
+}
+function viewerStep(d) {
+  const i = S.list.findIndex(x => x.id === S.viewId), n = S.list[i + d];
+  if (i < 0 || !n) { snapBack(); return false; }
+  openViewer(n.id, d);
+  return true;
+}
+function snapBack() {
+  const img = $('#vwImg');
+  img.style.transition = 'transform .2s ease'; img.style.transform = '';
+}
+function wireSwipe() {
+  const box = $('.viewer-img'), img = $('#vwImg');
+  let sx = null, sy = 0, dx = 0, horiz = null;
+  box.addEventListener('pointerdown', e => { sx = e.clientX; sy = e.clientY; dx = 0; horiz = null; img.style.transition = 'none'; });
+  box.addEventListener('pointermove', e => {
+    if (sx == null) return;
+    dx = e.clientX - sx;
+    if (horiz == null && Math.hypot(dx, e.clientY - sy) > 10) horiz = Math.abs(dx) > Math.abs(e.clientY - sy);
+    if (horiz) img.style.transform = `translateX(${dx}px)`;
+  });
+  const end = () => {
+    if (sx == null) return; sx = null;
+    if (horiz && Math.abs(dx) > Math.min(90, box.clientWidth * 0.18)) {
+      img.style.transition = 'transform .15s ease, opacity .15s ease';
+      img.style.transform = `translateX(${dx < 0 ? -60 : 60}%)`; img.style.opacity = '0';
+      setTimeout(() => { if (!viewerStep(dx < 0 ? 1 : -1)) img.style.opacity = ''; }, 140);
+    } else snapBack();
+  };
+  box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 }
 async function vwAction(act) {
   const p = await getPhoto(S.viewId); if (!p) return;
@@ -1013,7 +1163,11 @@ async function vwAction(act) {
       deliverSheet([new File([ob], `${fileBase(p)}_origineel.${extOf(ob)}`, { type: ob.type || 'image/jpeg' })], 'Originele foto');
     } else if (act === 'delete') {
       if (!confirm(`Foto #${p.nr} definitief uit de app verwijderen?`)) return;
-      await deletePhoto(p.id); show('Overview'); loadOverview(); toast('Verwijderd');
+      const i = S.list.findIndex(x => x.id === p.id);
+      await deletePhoto(p.id); toast('Verwijderd');
+      S.list = S.list.filter(x => x.id !== p.id);
+      const n = S.list[Math.min(i, S.list.length - 1)];
+      if (i >= 0 && n) openViewer(n.id); else { show('Overview'); loadOverview(); }
     }
   } catch (e) { alert('Mislukt: ' + e.message); }
 }
@@ -1025,10 +1179,7 @@ function wire() {
   $('#btnSettings').onclick = openSettings;
   $('#btnGallery').onclick = () => $('#fileGallery').click();
   $('#btnOverview').onclick = openOverview;
-  const sh = $('#btnShutter');
-  onTapOrHold(sh, () => capture(false), () => capture(true));
-  sh.addEventListener('pointerdown', () => setTimeout(() => { if (sh.matches(':active')) sh.classList.add('hold'); }, 350));
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => sh.addEventListener(ev, () => sh.classList.remove('hold')));
+  $('#btnShutter').onclick = capture;
   $('#fileGallery').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'galerij'); };
   $('#fileCamera').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'camera'); };
   $('#fileImport').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) importAnnotated(fs); };
@@ -1038,7 +1189,12 @@ function wire() {
     b.onclick = () => { ED.tool = b.dataset.tool; document.querySelectorAll('.tool[data-tool]').forEach(x => x.classList.toggle('active', x === b)); };
   });
   $('#edColor').addEventListener('pointerdown', e => e.preventDefault());
-  $('#edColor').onclick = () => setColor(COLORS[(COLORS.indexOf(ED.color) + 1) % COLORS.length]);
+  $('#edColor').onclick = () => ($('#colorPop').classList.contains('hidden') ? openColorPop() : closeColorPop());
+  $('#edCrop').addEventListener('pointerdown', e => e.preventDefault());
+  $('#edCrop').onclick = () => setCropMode(true);
+  $('#cropReset').onclick = () => { ED.cropRect = { ...FULL }; drawEditor(); };
+  $('#cropCancel').onclick = () => setCropMode(false);
+  $('#cropDone').onclick = applyCrop;
   $('#edUndo').addEventListener('pointerdown', e => e.preventDefault());
   $('#edUndo').onclick = () => { if (ED.draft?.shapes.length) { ED.draft.shapes.pop(); ED.dirty = true; drawEditor(); } };
   $('#edSave').addEventListener('pointerdown', e => e.preventDefault());
@@ -1054,6 +1210,9 @@ function wire() {
   $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
   $('#vwBack').onclick = () => { show('Overview'); loadOverview(); };
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });
+  $('#vwPrev').onclick = () => viewerStep(-1);
+  $('#vwNext').onclick = () => viewerStep(1);
+  wireSwipe();
   $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(true); });
 
   document.addEventListener('visibilitychange', () => {
