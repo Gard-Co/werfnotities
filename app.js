@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -296,6 +296,26 @@ function addProject(p) {
   LS.set('projects', S.projects);
 }
 function setProject(p) { S.project = p; LS.set('project', p); addProject(p); refreshCamBar(); }
+/* Projectnaam wijzigen: ook in alle foto's (de balk onder de foto wordt opnieuw gemaakt). */
+async function renameProject(old) {
+  const v = prompt(`Nieuwe naam voor project "${old}":`, old);
+  const nu = (v || '').trim();
+  if (!nu || nu === old) return false;
+  const all = await getAllPhotos();
+  if (S.projects.includes(nu) || all.some(p => p.project === nu)) { alert(`Er bestaat al een project "${nu}".`); return false; }
+  const mine = all.filter(p => p.project === old);
+  busy(`Naam wijzigen (${plural(mine.length, 'foto', 'foto\'s')})…`);
+  try {
+    for (const p of mine) { p.project = nu; await rerender(p); }
+  } catch (e) { busy(); alert('Naam wijzigen mislukt: ' + e.message); return false; }
+  busy();
+  S.projects = S.projects.map(x => (x === old ? nu : x)); LS.set('projects', S.projects);
+  if (S.project === old) { S.project = nu; LS.set('project', nu); }
+  if (S.ovProject === old) S.ovProject = nu;
+  refreshCamBar(); if (S.screen === 'Overview') loadOverview();
+  toast(`Project heet nu "${nu}"`);
+  return true;
+}
 function pickProject() {
   return new Promise(res => {
     let done = false;
@@ -307,6 +327,10 @@ function pickProject() {
     const rows = S.projects.map(p => {
       const row = el('div', { class: 'row' + (p === S.project ? ' on' : '') },
         el('button', { class: 'row-main', onclick: () => choose(p) }, p, p === S.project ? ico('check') : null),
+        el('button', { class: 'row-x', 'aria-label': 'Naam wijzigen', onclick: async () => {
+          if (!(await renameProject(p))) return;
+          closeSheet(); pickProject().then(finish); // lijst opnieuw tonen met de nieuwe naam
+        } }, ico('edit')),
         el('button', { class: 'row-x', 'aria-label': 'Uit lijst halen', onclick: () => {
           if (!confirm(`Project "${p}" uit de lijst verwijderen?\n\nDe foto's van dit project blijven bewaard.`)) return;
           S.projects = S.projects.filter(x => x !== p); LS.set('projects', S.projects); row.remove();
@@ -318,7 +342,7 @@ function pickProject() {
       el('h3', {}, 'Project'),
       el('div', { class: 'add-row' }, input, el('button', { class: 'primary', onclick: add }, 'Toevoegen')),
       rows.length ? el('div', { class: 'list' }, rows) : el('p', {}, 'Geef je eerste project een naam.'),
-      rows.length ? el('p', {}, 'Het kruisje haalt een project enkel uit deze lijst; de foto\'s blijven bewaard.') : null,
+      rows.length ? el('p', {}, 'Potlood: naam wijzigen (ook op de foto\'s). Kruisje: enkel uit deze lijst halen; de foto\'s blijven bewaard.') : null,
     ), () => finish(null));
     if (!S.projects.length) setTimeout(() => input.focus(), 150);
   });
@@ -691,8 +715,8 @@ async function renderAnnotated(bmp, rec) {
   const m = document.createElement('canvas').getContext('2d');
   m.font = FONT(fs);
   const noteLines = rec.note ? wrapText(m, rec.note, W - 2 * pad) : [];
-  const L1 = fs * 1.25, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
-  const barH = Math.round(pad + L1 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
+  const L1 = sfs * 1.45, L2 = fs * 1.3, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
+  const barH = Math.round(pad + L1 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
 
   const c = document.createElement('canvas'); c.width = W; c.height = IH + barH;
   const ctx = c.getContext('2d');
@@ -700,26 +724,24 @@ async function renderAnnotated(bmp, rec) {
   drawShapes(ctx, rec.shapes, 0, 0, W, IH);
   ctx.fillStyle = '#111113'; ctx.fillRect(0, IH, W, barH);
   let y = IH + pad;
-  // regel 1: #nr project · speld adres ............ datum uur  (adres, datum en uur in kleinere letters)
+  // regel 1: speld adres ............ datum uur  (kleine grijze letters)
   ctx.textBaseline = 'alphabetic';
-  const base = y + fs * 0.98, grey = '#a1a1aa';
-  ctx.font = FONT(sfs, 400);
+  const grey = '#a1a1aa';
+  let base = y + sfs * 0.95;
+  ctx.font = FONT(sfs, 400); ctx.fillStyle = grey;
   const dt = `${fmtDate(rec.createdAt)}  ${fmtTime(rec.createdAt)}`, dtW = ctx.measureText(dt).width;
-  ctx.fillStyle = grey; ctx.fillText(dt, W - pad - dtW, base);
-  const right = W - pad - dtW - fs * 0.8;
-  ctx.font = FONT(fs, 700); ctx.fillStyle = '#ffffff';
-  const head = ellipsize(ctx, `#${rec.nr}  ${rec.project}`, Math.max(fs * 3, (right - pad) * 0.55));
-  ctx.fillText(head, pad, base);
-  let x = pad + ctx.measureText(head).width + fs * 0.75;
-  if (right - x > sfs * 4) {
-    const ps = sfs * 1.05 / 24;
-    ctx.save(); ctx.translate(x - 4 * ps, base - sfs * 0.9 - 2 * ps); ctx.scale(ps, ps);
-    ctx.strokeStyle = grey; ctx.lineWidth = 2.2; ctx.stroke(PIN); ctx.restore();
-    x += sfs * 1.05;
-    ctx.font = FONT(sfs, 400); ctx.fillStyle = grey;
-    ctx.fillText(ellipsize(ctx, locText(rec), right - x), x, base);
-  }
+  ctx.fillText(dt, W - pad - dtW, base);
+  const ps = sfs * 1.05 / 24;
+  ctx.save(); ctx.translate(pad - 4 * ps, base - sfs * 0.9 - 2 * ps); ctx.scale(ps, ps);
+  ctx.strokeStyle = grey; ctx.lineWidth = 2.2; ctx.stroke(PIN); ctx.restore();
+  const ax = pad + sfs * 1.05;
+  ctx.fillText(ellipsize(ctx, locText(rec), W - pad - dtW - fs * 0.8 - ax), ax, base);
   y += L1;
+  // regel 2: #nr  project
+  base = y + fs * 0.98;
+  ctx.font = FONT(fs, 700); ctx.fillStyle = '#ffffff';
+  ctx.fillText(ellipsize(ctx, `#${rec.nr}  ${rec.project}`, W - 2 * pad), pad, base);
+  y += L2;
   ctx.textBaseline = 'top';
   // status
   if (LT) {
@@ -912,6 +934,7 @@ function overviewMenu() {
     el('h3', {}, 'Meer'),
     bigBtn('checkAll', 'Alles selecteren', () => { closeSheet(); selectAll(); }),
     bigBtn('upload', 'Foto\'s met notitie importeren', () => { closeSheet(); $('#fileImport').click(); }),
+    proj ? bigBtn('edit', 'Projectnaam wijzigen', () => { closeSheet(); renameProject(proj); }) : null,
     proj ? bigBtn('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); })
       : el('p', {}, 'Kies bovenaan één project om het af te sluiten.'),
     el('p', {}, 'Importeren: kies foto\'s met notitie die je eerder uit deze app bewaard of gedeeld hebt. Project, nummer, tags, notitie, datum en adres worden teruggelezen, zodat je opnieuw een Excel of PDF kunt maken.'),
@@ -1009,10 +1032,7 @@ async function shareFiles(files, title) {
   // Rechtstreeks het deelmenu openen als het kan; anders (te veel bestanden, tik verlopen) via het keuzemenu.
   if (files.length <= SHARE_MAX && canShareFiles(files)) {
     try { await navigator.share({ files, title }); return; }
-    catch (e) {
-      if (e.name === 'AbortError') return;
-      if (e.name === 'NotAllowedError' && files.length > 0) { savedSheet(files, 'Delen lukt niet in deze browser'); return; }
-    }
+    catch (e) { if (e.name === 'AbortError') return; } // tik verlopen: deelknop tonen (nieuwe tik)
   }
   shareSheet(files, title);
 }
