@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#141414">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>Werfnotities</title>
+</head>
+<body>
+
+<!-- ============ CAMERA ============ -->
+<section id="scrCamera" class="screen active">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="camMsg" class="cam-msg hidden"></div>
+  <div id="flash"></div>
+  <header class="cam-top">
+    <button id="btnProject" class="chip"><span id="projName">Kies project</span> ▾</button>
+    <span id="gps" class="gps bad" title="Geen GPS">●</span>
+    <button id="btnTorch" class="icon hidden" aria-label="Zaklamp">🔦</button>
+    <button id="btnSettings" class="icon" aria-label="Instellingen">⚙️</button>
+  </header>
+  <div class="hint">Lang drukken = snel opslaan zonder notitie</div>
+  <footer class="cam-bottom">
+    <button id="btnGallery" class="round" aria-label="Foto uit galerij">🖼️</button>
+    <button id="btnShutter" class="shutter" aria-label="Foto nemen"></button>
+    <button id="btnOverview" class="round" aria-label="Overzicht"><span class="fallback">🗂️</span><img id="lastThumb" alt="" hidden><span id="count"></span></button>
+  </footer>
+  <input type="file" id="fileGallery" accept="image/*" hidden>
+  <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+</section>
+
+<!-- ============ EDITOR ============ -->
+<section id="scrEditor" class="screen">
+  <header class="ed-top">
+    <button id="edCancel" class="icon" aria-label="Annuleren">✕</button>
+    <div class="ed-info">
+      <button id="edTitle" class="ed-title"></button>
+      <button id="edLoc" class="ed-loc"></button>
+    </div>
+  </header>
+  <div class="stage" id="stage"><canvas id="edCanvas"></canvas></div>
+  <div class="tools">
+    <button data-tool="arrow" class="tool active" aria-label="Pijl">➚</button>
+    <button data-tool="circle" class="tool" aria-label="Cirkel">◯</button>
+    <button data-tool="pen" class="tool" aria-label="Vrij tekenen">✎</button>
+    <button id="edColor" class="tool" aria-label="Kleur"><span class="swatch"></span></button>
+    <button id="edUndo" class="tool" aria-label="Ongedaan maken">↶</button>
+  </div>
+  <div class="tags" id="edTags"></div>
+  <div class="note-row">
+    <textarea id="edNote" rows="2" placeholder="Notitie… (tik 🎤 op je toetsenbord om in te spreken)" enterkeyhint="enter"></textarea>
+    <button id="edSave" class="save" aria-label="Opslaan">✓</button>
+  </div>
+</section>
+
+<!-- ============ OVERZICHT ============ -->
+<section id="scrOverview" class="screen">
+  <header class="bar">
+    <button id="ovBack" class="icon" aria-label="Terug">←</button>
+    <select id="ovProject"></select>
+    <button id="ovSelect" class="text-btn">Selecteer</button>
+  </header>
+  <div id="ovGrid" class="grid"></div>
+  <div id="ovEmpty" class="empty hidden">Nog geen foto's in dit project.</div>
+  <footer class="actions" id="ovActions">
+    <button data-act="share"><b>📤</b><span>Delen</span></button>
+    <button data-act="save"><b>💾</b><span>Opslaan</span></button>
+    <button data-act="excel"><b>📊</b><span>Excel</span></button>
+    <button data-act="pdf"><b>📄</b><span>PDF</span></button>
+    <button data-act="zip"><b>🗜️</b><span>ZIP</span></button>
+    <button data-act="delete" class="sel-only"><b>🗑️</b><span>Wis</span></button>
+  </footer>
+</section>
+
+<!-- ============ DETAIL ============ -->
+<section id="scrViewer" class="screen">
+  <header class="bar">
+    <button id="vwBack" class="icon" aria-label="Terug">←</button>
+    <b id="vwTitle" class="bar-title"></b>
+  </header>
+  <div class="viewer-img"><img id="vwImg" alt=""></div>
+  <div id="vwMeta" class="vw-meta"></div>
+  <footer class="actions">
+    <button data-vw="edit"><b>✏️</b><span>Bewerk</span></button>
+    <button data-vw="share"><b>📤</b><span>Delen</span></button>
+    <button data-vw="save"><b>💾</b><span>Opslaan</span></button>
+    <button data-vw="orig"><b>🖼️</b><span>Origineel</span></button>
+    <button data-vw="delete"><b>🗑️</b><span>Wis</span></button>
+  </footer>
+</section>
+
+<div id="sheet" class="sheet hidden"><div class="sheet-body" id="sheetBody"></div></div>
+<div id="busy" class="busy hidden"><div class="spinner"></div><span id="busyMsg"></span></div>
+<div id="toast" class="toast"></div>
+
+<script src="lib.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
