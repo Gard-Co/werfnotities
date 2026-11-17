@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.7';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  sort: '<path d="M3 6h18M6 12h12M10 18h4"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
@@ -71,6 +72,7 @@ const S = {
   pos: null, gpsWatch: null,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
+  ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'date'
   viewId: null,
 };
 const STATUS_COLORS = { nok: '#ef4444', todo: '#f97316', ok: '#22c55e', testen: '#3b82f6' };
@@ -710,7 +712,8 @@ async function renderAnnotated(bmp, rec) {
   const sx = cr.x * bmp.width, sy = cr.y * bmp.height, sw = cr.w * bmp.width, sh = cr.h * bmp.height;
   const sc = Math.min(1, MAX / Math.max(sw, sh));
   const W = Math.max(1, Math.round(sw * sc)), IH = Math.max(1, Math.round(sh * sc));
-  const fs = Math.max(14, Math.round(Math.min(W, IH) * 0.034)), sfs = Math.round(fs * 0.74);
+  // tekst evenredig met de breedte: in de PDF (gelijke breedte) even groot voor staande en liggende foto's
+  const fs = Math.max(14, Math.round(W * 0.034)), sfs = Math.round(fs * 0.74);
   const pad = Math.round(fs * 0.75), gap = Math.round(fs * 0.45);
   const m = document.createElement('canvas').getContext('2d');
   m.font = FONT(fs);
@@ -852,7 +855,7 @@ async function importAnnotated(files) {
 /* ---------------- overzicht ---------------- */
 let gridUrls = [];
 async function openOverview() {
-  S.ovProject = S.project || '__all__';
+  S.ovProject = S.project || '__all__'; S.ovStatus.clear();
   setSelecting(false, true);
   show('Overview');
   await loadOverview();
@@ -867,10 +870,38 @@ async function loadOverview() {
   projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
   if (S.ovProject !== '__all__' && !projects.includes(S.ovProject)) S.ovProject = '__all__';
   sel.value = S.ovProject;
-  S.list = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject).sort((a, b) => b.createdAt - a.createdAt);
+  const inProj = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject);
+  renderFilter(inProj);
+  S.list = inProj.filter(p => !S.ovStatus.size || S.ovStatus.has(statusOf(p))).sort(listOrder);
   for (const id of [...S.selected]) if (!S.list.some(p => p.id === id)) S.selected.delete(id);
   renderGrid();
 }
+/* ---- status-filter + volgorde (bepaalt ook de volgorde van PDF, Excel, ZIP en delen) ---- */
+const statusOf = p => p.tags?.[0] || '';
+const statusRank = p => { const t = statusOf(p); if (!t) return 999; const i = S.tags.indexOf(t); return i < 0 ? 900 : i; };
+const byNr = (a, b) => a.project.localeCompare(b.project) || a.nr - b.nr;
+const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b) : b.createdAt - a.createdAt);
+function renderFilter(inProj) {
+  const cnt = {}; inProj.forEach(p => { const s = statusOf(p); cnt[s] = (cnt[s] || 0) + 1; });
+  const extra = Object.keys(cnt).filter(s => s && !S.tags.includes(s));
+  const chip = (key, label, color) => {
+    const on = key === null ? !S.ovStatus.size : S.ovStatus.has(key);
+    const n = key === null ? inProj.length : cnt[key] || 0;
+    return el('button', { class: 'fchip' + (on ? ' on' : '') + (n ? '' : ' zero'), style: color ? `--c:${color}` : null, onclick: () => {
+      if (key === null) S.ovStatus.clear();
+      else if (S.ovStatus.has(key)) S.ovStatus.delete(key); else S.ovStatus.add(key);
+      loadOverview();
+    } }, color ? el('i') : null, label, el('b', {}, String(n)));
+  };
+  $('#ovFilter').replaceChildren(
+    el('button', { class: 'fsort', onclick: () => { S.ovSort = S.ovSort === 'status' ? 'date' : 'status'; LS.set('ovSort', S.ovSort); loadOverview(); } },
+      ico('sort'), S.ovSort === 'status' ? 'Status' : 'Nieuwste'),
+    chip(null, 'Alle'),
+    ...[...S.tags, ...extra].map(t => chip(t, t, tagColor(t))),
+    cnt[''] ? chip('', 'Geen status', '#71717a') : null,
+  );
+}
+const filterNote = () => (S.ovStatus.size ? 'filter: ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : '');
 function renderGrid() {
   gridUrls.forEach(u => URL.revokeObjectURL(u)); gridUrls = [];
   const g = $('#ovGrid'); g.replaceChildren();
@@ -917,7 +948,8 @@ function updateActions() {
 }
 function targets() {
   const arr = S.selecting && S.selected.size ? S.list.filter(p => S.selected.has(p.id)) : S.list;
-  return [...arr].sort((a, b) => a.project.localeCompare(b.project) || a.nr - b.nr);
+  // gesorteerd op status: zelfde volgorde als op het scherm (NOK, ToDo, OK, Testen); anders per nummer
+  return S.ovSort === 'status' ? [...arr] : [...arr].sort(byNr);
 }
 function exportName(list) {
   const projs = [...new Set(list.map(p => p.project))];
@@ -1048,13 +1080,13 @@ async function ovAction(act) {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
       await downloadMany(files);
     } else if (act === 'excel') {
-      busy('Excel maken…'); const f = await buildExcel(list); busy();
+      busy('Excel maken…'); const f = await buildExcel(list, filterNote()); busy();
       deliverSheet([f], 'Excel-export');
     } else if (act === 'pdf') {
-      busy('PDF maken…'); const f = await buildPdf(list); busy();
+      busy('PDF maken…'); const f = await buildPdf(list, filterNote()); busy();
       deliverSheet([f], 'PDF-verslag');
     } else if (act === 'zip') {
-      busy('ZIP maken…'); const f = await buildZip(list); busy();
+      busy('ZIP maken…'); const f = await buildZip(list, filterNote()); busy();
       deliverSheet([f], 'ZIP met alles');
     } else if (act === 'delete') {
       if (!S.selected.size) return;
@@ -1066,18 +1098,18 @@ async function ovAction(act) {
 }
 
 /* ---------------- exports ---------------- */
-function reportTitle(list) {
+function reportTitle(list, note = '') {
   const projs = [...new Set(list.map(p => p.project))];
   const times = list.map(p => p.createdAt);
   const from = fmtDate(Math.min(...times)), to = fmtDate(Math.max(...times));
   return {
     title: 'Verslag – ' + (projs.length === 1 ? projs[0] : projs.join(', ')),
-    sub: `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}`,
+    sub: `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}${note ? ' · ' + note : ''}`,
   };
 }
-async function buildExcel(list) {
+async function buildExcel(list, note = '') {
   const headers = ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
-  const { title, sub } = reportTitle(list);
+  const { title, sub } = reportTitle(list, note);
   const rows = list.map(p => [
     p.nr, p.project, p.tags.join(', '), p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
     p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
@@ -1086,14 +1118,14 @@ async function buildExcel(list) {
   const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub]);
   return new File([blob], exportName(list) + '.xlsx', { type: blob.type });
 }
-async function buildPdf(list) {
+async function buildPdf(list, note = '') {
   const imgs = [];
   for (const p of list) imgs.push({ blob: await getBlob(p.id + ':ann'), w: p.annW, h: p.annH });
-  const { title, sub } = reportTitle(list);
+  const { title, sub } = reportTitle(list, note);
   const blob = await makePdf(title, sub, imgs);
   return new File([blob], exportName(list) + '.pdf', { type: 'application/pdf' });
 }
-async function buildZip(list) {
+async function buildZip(list, note = '') {
   const base = exportName(list);
   const files = [];
   for (const p of list) {
@@ -1101,8 +1133,8 @@ async function buildZip(list) {
     const ob = await getBlob(p.id + ':orig');
     files.push({ name: `${base}/origineel/${fileBase(p)}_origineel.${extOf(ob)}`, data: ob });
   }
-  files.push({ name: `${base}/${base}.xlsx`, data: await buildExcel(list) });
-  files.push({ name: `${base}/${base}.pdf`, data: await buildPdf(list) });
+  files.push({ name: `${base}/${base}.xlsx`, data: await buildExcel(list, note) });
+  files.push({ name: `${base}/${base}.pdf`, data: await buildPdf(list, note) });
   const blob = await makeZip(files);
   return new File([blob], base + '.zip', { type: 'application/zip' });
 }
@@ -1226,7 +1258,7 @@ function wire() {
   $('#ovBack').onclick = () => show('Camera');
   $('#ovSelect').onclick = () => setSelecting(!S.selecting);
   $('#ovMenu').onclick = overviewMenu;
-  $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.selected.clear(); loadOverview(); };
+  $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); loadOverview(); };
   $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
   $('#vwBack').onclick = () => { show('Overview'); loadOverview(); };
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });

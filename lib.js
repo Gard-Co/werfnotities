@@ -137,7 +137,7 @@ const pdfStr = s => String(s).replace(/[\\()]/g, m => '\\' + m).replace(/[\r\n]+
 async function makePdf(title, subtitle, images) {
   const chunks = []; let len = 0; const offsets = [];
   const push = x => { const b = typeof x === 'string' ? latin1(x) : x; chunks.push(b); len += b.length; };
-  const perPage = 2;
+  const perPage = 3;
   const pageCount = Math.max(1, Math.ceil(images.length / perPage));
   let next = 5;
   const pages = [];
@@ -155,21 +155,21 @@ async function makePdf(title, subtitle, images) {
   obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
 
-  const W = 595, H = 842, M = 36;
+  // A4 liggend, 3 vakken naast elkaar van gelijke breedte; foto's bovenaan uitgelijnd.
+  const W = 842, H = 595, M = 30;
   for (let p = 0; p < pages.length; p++) {
     const pg = pages[p];
     let s = '';
-    s += `BT /F2 15 Tf ${M} ${H - M - 14} Td (${pdfStr(title)}) Tj ET\n`;
-    s += `BT /F1 9 Tf ${M} ${H - M - 28} Td (${pdfStr(subtitle)}) Tj ET\n`;
-    s += `0.3 w ${M} ${H - M - 36} m ${W - M} ${H - M - 36} l S\n`;
-    const top = H - M - 46, bottom = M + 18, gap = 14;
-    const slotH = (top - bottom - gap) / 2;
+    s += `BT /F2 14 Tf ${M} ${H - M - 12} Td (${pdfStr(title)}) Tj ET\n`;
+    s += `BT /F1 9 Tf ${M} ${H - M - 25} Td (${pdfStr(subtitle)}) Tj ET\n`;
+    s += `0.3 w ${M} ${H - M - 33} m ${W - M} ${H - M - 33} l S\n`;
+    const top = H - M - 43, bottom = M + 14, gap = 14;
+    const cellW = (W - 2 * M - (perPage - 1) * gap) / perPage, cellH = top - bottom;
     pg.imgs.forEach((im, i) => {
-      const maxW = W - 2 * M;
-      const sc = Math.min(maxW / im.w, slotH / im.h);
+      const sc = Math.min(cellW / im.w, cellH / im.h);
       const dw = im.w * sc, dh = im.h * sc;
-      const x = M + (maxW - dw) / 2;
-      const y = top - i * (slotH + gap) - dh;
+      const x = M + i * (cellW + gap) + (cellW - dw) / 2;
+      const y = top - dh;
       s += `q ${dw.toFixed(2)} 0 0 ${dh.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm /Im${i} Do Q\n`;
     });
     s += `BT /F1 8 Tf ${W - M - 60} ${M} Td (Pagina ${p + 1} / ${pages.length}) Tj ET\n`;

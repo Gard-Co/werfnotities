@@ -204,3 +204,17 @@ img { -webkit-touch-callout:none; }
 .vw-meta .st { display:inline-flex; align-items:center; gap:6px; color:var(--fg); font-weight:500; }
 .vw-meta .st::before { content:''; width:8px; height:8px; border-radius:50%; background:var(--c); }
 .vw-meta .st + .st { margin-left:10px; }
+/* ---------- v1.7: statusfilter in overzicht ---------- */
+.filter-bar { display:flex; gap:6px; padding:8px 10px; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); scrollbar-width:none; flex:none; }
+.filter-bar::-webkit-scrollbar { display:none; }
+.fchip, .fsort { flex:none; display:flex; align-items:center; gap:6px; height:32px; padding:0 11px; border-radius:16px;
+  border:1px solid var(--line-2); color:var(--fg-2); font-size:13px; font-weight:500; }
+.fchip i { width:7px; height:7px; border-radius:50%; background:var(--c); }
+.fchip b { font-weight:600; font-size:11.5px; color:var(--fg-3); }
+.fchip.on { background:var(--fg); border-color:var(--fg); color:#000; }
+.fchip.on b { color:#52525b; }
+.fchip[style].on { background:color-mix(in srgb, var(--c) 24%, transparent); border-color:color-mix(in srgb, var(--c) 75%, transparent); color:var(--fg); }
+.fchip[style].on b { color:var(--fg-2); }
+.fchip.zero:not(.on) { opacity:.45; }
+.fsort { background:var(--surface-2); border-color:transparent; color:var(--fg); }
+.fsort .ic { width:16px; height:16px; color:var(--fg-2); }
