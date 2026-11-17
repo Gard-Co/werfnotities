@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.9';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -379,7 +379,7 @@ async function openSettings() {
     el('h4', {}, 'Tips'),
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
     el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken. In een geopende foto veeg je naar links of rechts voor de volgende.'),
-    el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION),
+    el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION + ' · Gard&Co'),
   ));
   try {
     const persisted = await navigator.storage?.persisted?.();
@@ -768,6 +768,10 @@ async function renderAnnotated(bmp, rec) {
     y += gap; ctx.font = FONT(fs, 400); ctx.fillStyle = '#f4f4f5';
     for (const l of noteLines) { ctx.fillText(l, pad, y); y += LN; }
   }
+  // merknaam heel klein rechtsonder in de balk
+  ctx.textBaseline = 'alphabetic'; ctx.font = FONT(Math.max(9, Math.round(fs * 0.42)), 500); ctx.fillStyle = '#52525b';
+  const brand = 'Gard&Co';
+  ctx.fillText(brand, W - pad - ctx.measureText(brand).width, c.height - Math.round(pad * 0.3));
   const blob = await toBlob(c, 0.8);
   const tw = 360, th = Math.round(IH * tw / W);
   const tc = document.createElement('canvas'); tc.width = tw; tc.height = th;
@@ -1161,13 +1165,7 @@ async function openViewer(id, dir = 0) {
   $('#vwTitle').textContent = `#${p.nr}  ${p.project}`;
   $('#vwPos').textContent = i >= 0 && S.list.length > 1 ? `${i + 1} / ${S.list.length}` : '';
   $('#vwPrev').disabled = i <= 0; $('#vwNext').disabled = i < 0 || i >= S.list.length - 1;
-  const row = (i, ...c) => el('div', { class: 'row-i' }, ico(i), el('span', {}, ...c));
-  $('#vwMeta').replaceChildren(...[
-    row('clock', `${fmtDate(p.createdAt)}  ${fmtTime(p.createdAt)}`),
-    row('pin', p.lat != null ? el('a', { href: mapUrl(p), target: '_blank', rel: 'noopener' }, locText(p)) : 'Geen locatie'),
-    p.tags.length ? row('tag', ...p.tags.map(t => el('span', { class: 'st', style: `--c:${tagColor(t)}` }, t))) : null,
-    p.note ? el('div', { class: 'note' }, p.note) : null,
-  ].filter(Boolean));
+  // geen info onder de foto: die staat al in de balk op de foto zelf
   if (S.screen !== 'Viewer') show('Viewer');
 }
 function viewerStep(d) {
