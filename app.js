@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '2.9';
+const APP_VERSION = '3.2';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1103,7 +1103,7 @@ async function loadNotes() {
     const text = isPhoto ? n.note : n.text;
     row.append(lead, el('div', { class: 'nt-main', onclick: open },
       el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, isPhoto ? `#${n.nr}` : `N${n.nr}`), n.owner ? el('span', { class: 'nt-owner' }, ico('user'), n.owner) : null),
-      el('div', { class: 'nt-text' + (text ? '' : ' empty') }, text || 'Geen tekst op de foto'),
+      el('div', { class: 'nt-text' + (text ? '' : ' no-text') }, text || 'Geen tekst op de foto'),
       S.ntProject === '__all__' ? el('div', { class: 'nt-sub' }, el('span', { class: 'nt-proj' }, n.project)) : null));
     box.append(row);
   }
@@ -1377,7 +1377,7 @@ function shareSheet(files, title, intro, text) {
   const shareable = canShareFiles(groups[0]);
   const btns = groups.map((g, i) => {
     const label = groups.length === 1
-      ? (files.length === 1 ? 'Delen via WhatsApp, mail…' : `${plural(files.length, 'foto', 'foto\'s')} delen via WhatsApp, mail…`)
+      ? (files.length === 1 || files.some(f => !/^image\//.test(f.type)) ? 'Delen via WhatsApp, mail…' : `${plural(files.length, 'foto', 'foto\'s')} delen via WhatsApp, mail…`)
       : `Deel ${i + 1} van ${groups.length}: foto ${i * SHARE_MAX + 1}–${i * SHARE_MAX + g.length}`;
     const b = bigBtn('share', label, async () => {
       try {
@@ -1420,7 +1420,7 @@ async function ovAction(act) {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
       const items = mergeItems(list, await exportNotes());
       const rt = reportTitle(items, filterDesc());
-      copyTableHtml(items, rt);
+      // overzichtstabel als afbeelding vooraan, daarna de foto's
       await shareFiles(files, rt.title, mailBody(items, rt));
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
@@ -1431,8 +1431,8 @@ async function ovAction(act) {
     } else if (act === 'pdf') {
       busy('PDF maken…'); const f = await buildPdf(list, filterDesc(), notes); busy();
       const items = mergeItems(list, notes), rt = reportTitle(items, filterDesc());
-      copyTableHtml(items, rt);
       deliverSheet([f], rt.title, mailBody(items, rt));
+
     } else if (act === 'word') {
       busy('Word maken…'); const f = await buildWord(list, filterDesc(), notes); busy();
       deliverSheet([f], reportTitle(mergeItems(list, notes)).title);
@@ -1463,26 +1463,16 @@ function reportTitle(items, filter = '') {
 }/* Overzichtstabel in de mail: dezelfde regels als de tabel in de PDF.
    Een browser-app kan enkel platte tekst aan Outlook/Gmail geven, dus één regel per notitie. */
 function mailBody(items, rt) {
+  // per notitie:  • tekst
+  //                    nr | status | eigenaar   (+ project bij "alle projecten")
   const many = new Set(items.map(p => p.project)).size > 1;
-  const lines = items.map(p => [nrOf(p).replace(/^(\d)/, '#$1'), many ? p.project : '', statusOf(p) || '–', ownerOf(p) ? '→ ' + ownerOf(p) : '',
-    (itemText(p) || '(geen tekst)').replace(/\s*\n\s*/g, ' / '),
-    p.kind === 'note' ? `${fmtDate(tsOf(p))} ${fmtTime(tsOf(p))}` : `${dateOf(p)} ${timeOf(p)}`.trim()].filter(Boolean).join('  |  '));
-  return [rt.mail, '', 'Overzicht', ...lines].join('\n');
-}
-/* Daarnaast een echte tabel op het klembord: in de mail lang drukken → Plakken. */
-function copyTableHtml(items, rt) {
-  try {
-    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') return;
-    const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])).replace(/\n/g, '<br>');
-    const th = 'style="background:#3f3f46;color:#fff;text-align:left;padding:6px 8px;font:bold 13px Arial"';
-    const td = 'style="border-bottom:1px solid #ddd;padding:6px 8px;font:13px Arial;vertical-align:top"';
-    const rows = items.map(p => `<tr><td ${td}>${esc(nrOf(p))}</td><td ${td}>${esc(p.project)}</td><td ${td}>${statusOf(p) ? `<span style="color:${tagColor(statusOf(p))}">&#9679;</span> ${esc(statusOf(p))}` : ''}</td><td ${td}>${esc(ownerOf(p))}</td><td ${td}>${esc(itemText(p))}</td><td ${td}>${esc(p.kind === 'note' ? fmtDate(tsOf(p)) : dateOf(p))}</td><td ${td}>${esc(p.kind === 'note' ? fmtTime(tsOf(p)) : timeOf(p))}</td></tr>`).join('');
-    const html = `<div style="font:14px Arial"><b style="font-size:16px">${esc(rt.title)}</b><br>${esc(rt.sub)}<br>${esc(rt.filter)}<br><br><table style="border-collapse:collapse"><tr>${['Nr', 'Project', 'Status', 'Eigenaar', 'Notitie', 'Datum', 'Uur'].map(h => `<th ${th}>${h}</th>`).join('')}</tr>${rows}</table></div>`;
-    navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([mailBody(items, rt)], { type: 'text/plain' }) })])
-      .then(() => toast('Tabel gekopieerd: in de mail lang drukken → Plakken', true, 3500)).catch(() => {});
-  } catch { /* klembord niet beschikbaar */ }
-}
-const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
+  const blocks = items.map(p => {
+    const text = (itemText(p) || '(geen tekst)').replace(/\s*\n\s*/g, ' / ');
+    const meta = [p.kind === 'note' ? 'N' + p.nr : '#' + p.nr, statusOf(p), ownerOf(p), many ? p.project : ''].filter(Boolean).join(' | '); // leeg = weglaten
+    return `• ${text}\n      ${meta}`;
+  });
+  return [rt.mail, '', ...blocks.join('\n\n').split('\n')].join('\n');
+}const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
 async function buildExcel(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
   const headers = ['Nr', 'Project', 'Status', 'Eigenaar', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
