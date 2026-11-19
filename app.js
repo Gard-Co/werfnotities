@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '3.6';
+const APP_VERSION = '3.7';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -351,7 +351,7 @@ async function importFile(f, source) {
 async function refreshCamBar() {
   $('#projName').textContent = S.project || 'Kies project';
   const mine = (await getAllPhotos()).filter(p => p.project === S.project).sort((a, b) => b.createdAt - a.createdAt);
-  $('#count').textContent = mine.length || '';
+  $('#count').textContent = ''; // geen aantal op de knop Exports
   // teller op de knop Notities: losse notities + fotonotities van dit project
   const nNotes = (await getAllNotes()).filter(n => n.project === S.project).length + mine.length;
   $('#ntCount').textContent = nNotes || '';
@@ -1397,7 +1397,17 @@ function targets() {
   return S.ovSort === 'status' ? [...arr] : [...arr].sort(byNr);
 }
 // bestandsnaam: Notities_Projectnaam_datum
-function exportName(items) { return `Notities_${safe(projName(items))}_${isoDay(Date.now())}`; }
+function exportName(items) { return `Notities_${safe(projName(items))}_${isoDay(Date.now())}${S.exportTag || ''}`; }
+/* Achtervoegsel met de gebruikte filters + uur, zodat elke export een eigen bestandsnaam heeft
+   (anders opent Android in Downloads soms een vorige export met dezelfde naam). */
+function filterTag() {
+  const parts = [];
+  if (S.ovStatus.size) parts.push(...[...S.ovStatus].map(s => s || 'zonder-status'));
+  if (S.ovOwner.size) parts.push(...[...S.ovOwner].map(o => o || 'zonder-eigenaar'));
+  if (S.selecting && S.selected.size) parts.push('selectie');
+  const d = new Date();
+  return (parts.length ? '_' + parts.map(p => safe(p)).join('-') : '') + '_' + pad2(d.getHours()) + pad2(d.getMinutes());
+}
 async function annFiles(list) {
   const out = [];
   for (const p of list) out.push(new File([await withMeta(await getBlob(p.id + ':ann'), p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
@@ -1422,6 +1432,7 @@ async function closeProject(proj) {
   const what = [list.length ? plural(list.length, 'foto', 'foto\'s') : '', notes.length ? plural(notes.length, 'notitie', 'notities') : ''].filter(Boolean).join(' en ');
   busy('ZIP maken…');
   let zip;
+  S.exportTag = '_' + pad2(new Date().getHours()) + pad2(new Date().getMinutes());
   try { zip = await buildZip(list, 'Filter: geen (volledig project, project afgesloten)', notes); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
   busy();
   const delBtn = bigBtn('trash', 'Alles uit de app wissen', async () => {
@@ -1524,6 +1535,7 @@ async function shareFiles(files, title, text) {
 
 async function ovAction(act) {
   const sel = targets();
+  S.exportTag = filterTag();
   const list = sel.filter(p => p.kind !== 'note'); // foto's
   const notes = sel.filter(p => p.kind === 'note'); // losse notities: enkel in de tabellen
   if (!sel.length) { toast('Niets geselecteerd', false); return; }
