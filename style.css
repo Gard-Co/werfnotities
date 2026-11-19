@@ -307,3 +307,10 @@ img { -webkit-touch-callout:none; }
 .owner-list .add-row input { height:40px; font-size:15px; }
 .owner-list .add-row .primary { height:40px; padding:0 14px; }
 #scrViewer.is-note [data-vw="save"], #scrViewer.is-note [data-vw="orig"] { display:none; }
+/* ---------- v3.4: losse notities in het Exports-raster ---------- */
+.cell.note-cell { background:var(--surface-2); display:flex; flex-direction:column; padding:30px 8px 8px; }
+.note-cell .note-ic { position:absolute; bottom:6px; left:7px; color:var(--fg-3); }
+.note-cell .note-ic .ic { width:15px; height:15px; }
+.note-cell .note-txt { font-size:12px; line-height:1.3; color:var(--fg); overflow:hidden; display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; word-break:break-word; }
+.note-cell .note-own { position:absolute; bottom:6px; left:26px; right:30px; font-size:11px; color:var(--fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.grid.selecting .cell.note-cell:not(.sel) { opacity:.55; }

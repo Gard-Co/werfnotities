@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '3.2';
+const APP_VERSION = '3.4';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
   user: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/>',
   word: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8.5 12 1.2 5 1.3-3.5 1.3 3.5 1.2-5"/>',
@@ -846,7 +847,7 @@ async function renderAnnotated(bmp, rec) {
   ctx.font = FONT(fs, 700); ctx.fillStyle = '#ffffff';
   const nrT = `#${rec.nr}  `, nrW = ctx.measureText(nrT).width;
   ctx.fillText(nrT, pad, base);
-  ctx.fillStyle = PROJECT_YELLOW;
+  ctx.fillStyle = '#ffffff'; // op de foto zelf: alles wit
   ctx.fillText(ellipsize(ctx, rec.project, W - 2 * pad - nrW), pad + nrW, base);
   y += L2;
   ctx.textBaseline = 'top';
@@ -886,6 +887,19 @@ async function renderAnnotated(bmp, rec) {
   tc.getContext('2d').drawImage(c, 0, 0, W, IH, 0, 0, tw, th);
   const thumb = await toBlob(tc, 0.7);
   return { blob, w: W, h: c.height, ih: IH, thumb };
+}
+
+/* Eenmalig na een update van de balk-opmaak: alle foto's opnieuw opmaken (op de achtergrond). */
+const BAR_VERSION = 3;
+async function refreshAllBars() {
+  if (LS.get('barVersion', 0) >= BAR_VERSION) return;
+  for (const p of await getAllPhotos()) {
+    if (S.screen === 'Editor') { setTimeout(refreshAllBars, 15000); return; } // niet storen tijdens bewerken
+    try { await rerender(p); } catch (e) { console.warn('Balk vernieuwen mislukt', p.id, e); }
+    await sleep(50);
+  }
+  LS.set('barVersion', BAR_VERSION);
+  if (S.screen === 'Overview') loadOverview(); else if (S.screen === 'Notes') loadNotes(); else refreshCamBar();
 }
 
 /* ---------------- verborgen info in de JPEG (om later terug te importeren) ---------------- */
@@ -973,7 +987,8 @@ async function openOverview() {
   await loadOverview();
 }
 async function loadOverview() {
-  const all = await getAllPhotos(), noteProjs = new Set((await getAllNotes()).map(n => n.project));
+  const photosAll = await getAllPhotos(), notesAll = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
+  const all = [...photosAll, ...notesAll], noteProjs = new Set(notesAll.map(n => n.project));
   const counts = {};
   all.forEach(p => { counts[p.project] = (counts[p.project] || 0) + 1; });
   const projects = [...new Set([...S.projects, ...Object.keys(counts), ...noteProjs])].filter(p => counts[p] || noteProjs.has(p) || p === S.project);
@@ -982,7 +997,7 @@ async function loadOverview() {
   projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
   if (S.ovProject !== '__all__' && !projects.includes(S.ovProject)) S.ovProject = '__all__';
   sel.value = S.ovProject;
-  const inProj = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject);
+  const inProj = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject); // foto's + losse notities
   renderFilter(inProj);
   S.list = inProj.filter(p => (!S.ovStatus.size || S.ovStatus.has(statusOf(p))) && ownerOk(S.ovOwner, p)).sort(listOrder);
   for (const id of [...S.selected]) if (!S.list.some(p => p.id === id)) S.selected.delete(id);
@@ -1049,7 +1064,7 @@ function filterDesc() {
   if (S.ovProject === '__all__') parts.push('alle projecten');
   parts.push(S.ovStatus.size ? 'status ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : 'alle statussen');
   parts.push(S.ovOwner.size ? 'eigenaar ' + [...S.ovOwner].map(o => o || 'geen eigenaar').join(', ') : 'alle eigenaars');
-  if (S.selecting && S.selected.size) parts.push(`eigen selectie van ${plural(S.selected.size, 'foto', 'foto\'s')} (zonder losse notities)`);
+  if (S.selecting && S.selected.size) parts.push('eigen selectie');
   parts.push(S.ovSort === 'status' ? 'volgorde op status' : 'volgorde op nummer');
   return 'Filter: ' + parts.join(', ');
 }
@@ -1103,7 +1118,7 @@ async function loadNotes() {
     const text = isPhoto ? n.note : n.text;
     row.append(lead, el('div', { class: 'nt-main', onclick: open },
       el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, isPhoto ? `#${n.nr}` : `N${n.nr}`), n.owner ? el('span', { class: 'nt-owner' }, ico('user'), n.owner) : null),
-      el('div', { class: 'nt-text' + (text ? '' : ' no-text') }, text || 'Geen tekst op de foto'),
+      text ? el('div', { class: 'nt-text' }, text) : null,
       S.ntProject === '__all__' ? el('div', { class: 'nt-sub' }, el('span', { class: 'nt-proj' }, n.project)) : null));
     box.append(row);
   }
@@ -1246,6 +1261,20 @@ function renderGrid() {
   const g = $('#ovGrid'); g.replaceChildren();
   g.classList.toggle('selecting', S.selecting);
   for (const p of S.list) {
+    if (p.kind === 'note') { // losse notitie: tekstkaartje, ook selecteerbaar (komt enkel in de tabellen)
+      const cell = el('div', { class: 'cell note-cell' + (S.selected.has(p.id) ? ' sel' : '') },
+        el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 12) + '  ' : '') + 'N' + p.nr),
+        p.tags.length ? el('span', { class: 'dots' }, p.tags.map(t => el('i', { style: `background:${tagColor(t)}` }))) : null,
+        el('span', { class: 'note-ic' }, ico('list')),
+        el('span', { class: 'note-txt' }, p.text || ''),
+        p.owner ? el('span', { class: 'note-own' }, '→ ' + p.owner) : null,
+        el('span', { class: 'chk' }, ico('check')));
+      onTapOrHold(cell, () => {
+        if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Overview'; openViewer(p.id); }
+      }, () => { if (!S.selecting) setSelecting(true); toggleSel(p.id, true); });
+      g.append(cell);
+      continue;
+    }
     const u = URL.createObjectURL(p.thumb); gridUrls.push(u);
     const cell = el('div', { class: 'cell' + (S.selected.has(p.id) ? ' sel' : '') },
       el('img', { src: u, alt: '', loading: 'lazy' }),
@@ -1254,7 +1283,7 @@ function renderGrid() {
       el('span', { class: 'cap' }, p.note || `${dateOf(p)} ${timeOf(p)}`),
       el('span', { class: 'chk' }, ico('check')));
     onTapOrHold(cell, () => {
-      if (S.selecting) toggleSel(p.id); else openViewer(p.id);
+      if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Overview'; openViewer(p.id); }
     }, () => { if (!S.selecting) setSelecting(true); toggleSel(p.id, true); });
     g.append(cell);
   }
@@ -1370,18 +1399,17 @@ function savedSheet(files, title) {
     bigBtn('check', 'OK', () => closeSheet()),
   ));
 }
+/* Met text: twee keuzes. "Mailen" geeft onderwerp + notities in de tekst mee (Outlook, Gmail);
+   "WhatsApp, andere apps" stuurt enkel de bestanden, zonder tekst. */
 function shareSheet(files, title, intro, text) {
   if (!files.every(shareableType)) { savedSheet(files, title); return; }
   const groups = [];
   for (let i = 0; i < files.length; i += SHARE_MAX) groups.push(files.slice(i, i + SHARE_MAX));
   const shareable = canShareFiles(groups[0]);
-  const btns = groups.map((g, i) => {
-    const label = groups.length === 1
-      ? (files.length === 1 || files.some(f => !/^image\//.test(f.type)) ? 'Delen via WhatsApp, mail…' : `${plural(files.length, 'foto', 'foto\'s')} delen via WhatsApp, mail…`)
-      : `Deel ${i + 1} van ${groups.length}: foto ${i * SHARE_MAX + 1}–${i * SHARE_MAX + g.length}`;
-    const b = bigBtn('share', label, async () => {
+  const mkBtn = (g, i, icon, label, withText) => {
+    const b = bigBtn(icon, label, async () => {
       try {
-        await navigator.share(shareData(g, title, text));
+        await navigator.share(shareData(g, title, withText && i === 0 ? text : null));
         b.classList.add('done'); b.firstChild.replaceWith(ico('check'));
         if (groups.length === 1) closeSheet();
       } catch (e) {
@@ -1390,21 +1418,27 @@ function shareSheet(files, title, intro, text) {
       }
     });
     return b;
-  });
+  };
+  const part = (g, i) => (groups.length > 1 ? ` (deel ${i + 1}/${groups.length}: ${i * SHARE_MAX + 1}–${i * SHARE_MAX + g.length})` : '');
+  const what = files.length === 1 || files.some(f => !/^image\//.test(f.type)) ? '' : ' ' + plural(files.length, 'foto', 'foto\'s');
+  const btns = text
+    ? [el('h4', {}, 'Mail (met notities in de tekst)'), ...groups.map((g, i) => mkBtn(g, i, 'mail', `Mailen${what}${part(g, i)}`, true)),
+       el('h4', {}, 'WhatsApp of andere apps (zonder tekst)'), ...groups.map((g, i) => mkBtn(g, i, 'share', `Delen${what}${part(g, i)}`, false))]
+    : groups.map((g, i) => mkBtn(g, i, 'share', `Delen${what} via WhatsApp, mail…${part(g, i)}`, false));
   openSheet(el('div', {},
     el('h3', {}, title),
     intro ? el('p', {}, intro) : null,
     groups.length > 1 && shareable ? el('p', {}, `Android deelt maximaal ${SHARE_MAX} bestanden per keer. Tik de knoppen na elkaar aan.`) : null,
     shareable ? btns : el('p', {}, 'Deze browser kan niet rechtstreeks delen. Sla op en deel daarna vanuit de app Bestanden (map Downloads). Chrome werkt hier het best.'),
+    el('h4', {}, 'Bewaren'),
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { closeSheet(); downloadMany(files); }),
   ));
-}
-const deliverSheet = (files, title, text) => shareSheet(files, title, files.length === 1 ? files[0].name : null, text);
+}const deliverSheet = (files, title, text) => shareSheet(files, title, files.length === 1 ? files[0].name : null, text);
 // title wordt in Gmail/Outlook het onderwerp, text de inhoud van de mail
 const shareData = (files, title, text) => (text ? { files, title, text } : { files, title });
 async function shareFiles(files, title, text) {
-  // Rechtstreeks het deelmenu openen als het kan; anders (te veel bestanden, tik verlopen) via het keuzemenu.
-  if (files.length <= SHARE_MAX && canShareFiles(files)) {
+  // Met mailtekst: eerst kiezen tussen Mail en WhatsApp/andere. Zonder: rechtstreeks het deelmenu openen.
+  if (!text && files.length <= SHARE_MAX && canShareFiles(files)) {
     try { await navigator.share(shareData(files, title, text)); return; }
     catch (e) { if (e.name === 'AbortError') return; } // tik verlopen: deelknop tonen (nieuwe tik)
   }
@@ -1412,15 +1446,16 @@ async function shareFiles(files, title, text) {
 }
 
 async function ovAction(act) {
-  const list = targets();
-  const notes = ['excel', 'pdf', 'word', 'zip'].includes(act) ? await exportNotes() : [];
-  if (!list.length && !notes.length) { toast('Geen foto\'s', false); return; }
+  const sel = targets();
+  const list = sel.filter(p => p.kind !== 'note'); // foto's
+  const notes = sel.filter(p => p.kind === 'note'); // losse notities: enkel in de tabellen
+  if (!sel.length) { toast('Niets geselecteerd', false); return; }
+  if (['share', 'save'].includes(act) && !list.length) { toast('Geen foto\'s geselecteerd (losse notities zitten enkel in Excel, PDF, Word en ZIP)', false, 3500); return; }
   try {
     if (act === 'share') {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
-      const items = mergeItems(list, await exportNotes());
+      const items = mergeItems(list, notes);
       const rt = reportTitle(items, filterDesc());
-      // overzichtstabel als afbeelding vooraan, daarna de foto's
       await shareFiles(files, rt.title, mailBody(items, rt));
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
@@ -1441,8 +1476,10 @@ async function ovAction(act) {
       deliverSheet([f], 'ZIP met alles');
     } else if (act === 'delete') {
       if (!S.selected.size) return;
-      if (!confirm(`${plural(list.length, 'foto', 'foto\'s')} definitief uit de app verwijderen?`)) return;
+      const what = [list.length ? plural(list.length, 'foto', 'foto\'s') : '', notes.length ? plural(notes.length, 'losse notitie', 'losse notities') : ''].filter(Boolean).join(' en ');
+      if (!confirm(`${what} definitief uit de app verwijderen?`)) return;
       for (const p of list) await deletePhoto(p.id);
+      for (const n of notes) await deleteNote(n.id);
       setSelecting(false, true); await loadOverview(); toast('Verwijderd');
     }
   } catch (e) { busy(); alert('Mislukt: ' + e.message); }
@@ -1467,11 +1504,11 @@ function mailBody(items, rt) {
   //                    nr | status | eigenaar   (+ project bij "alle projecten")
   const many = new Set(items.map(p => p.project)).size > 1;
   const blocks = items.map(p => {
-    const text = (itemText(p) || '(geen tekst)').replace(/\s*\n\s*/g, ' / ');
+    const text = (itemText(p) || '').replace(/\s*\n\s*/g, ' / ');
     const meta = [p.kind === 'note' ? 'N' + p.nr : '#' + p.nr, statusOf(p), ownerOf(p), many ? p.project : ''].filter(Boolean).join(' | '); // leeg = weglaten
-    return `• ${text}\n      ${meta}`;
+    return text ? `• ${text}\n      ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
   });
-  return [rt.mail, '', ...blocks.join('\n\n').split('\n')].join('\n');
+  return [rt.title, '', rt.sub, ...(rt.filter ? [rt.filter] : []), '', ...blocks.join('\n\n').split('\n')].join('\n');
 }const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
 async function buildExcel(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
@@ -1694,7 +1731,7 @@ async function vwAction(act) {
     if (act === 'edit') editNote(document.querySelector('[data-vw="edit"]'), n);
     else if (act === 'share') {
       const title = `Notities ${n.project} ${fmtDate(Date.now())}`;
-      const text = [title, `1 losse notitie: N${n.nr}${n.tags.length ? ' · ' + n.tags.join(', ') : ''}${n.owner ? ' · eigenaar ' + n.owner : ''}`, n.text, `${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`].join('\n');
+      const text = [title, '', `1 losse notitie: N${n.nr}${n.tags.length ? ' · ' + n.tags.join(', ') : ''}${n.owner ? ' · eigenaar ' + n.owner : ''}`, n.text, `${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`].join('\n');
       try { await navigator.share({ title, text }); } catch (e) { if (e.name !== 'AbortError') { try { await navigator.clipboard.writeText(text); toast('Tekst gekopieerd'); } catch { alert(text); } } }
     } else if (act === 'delete') {
       if (!confirm(`Notitie N${n.nr} verwijderen?`)) return;
@@ -1710,7 +1747,7 @@ async function vwAction(act) {
     } else if (act === 'share') {
       const rt = reportTitle([p]);
       await shareFiles(await annFiles([p]), rt.title,
-        [rt.title, `1 fotonotitie: #${p.nr}${p.tags.length ? ' · ' + p.tags.join(', ') : ''}`, p.note, (dateOf(p) + ' ' + timeOf(p)).trim(), p.address].filter(s => s && s.trim()).join('\n'));
+        [rt.title, '', ...[[`#${p.nr}`, statusOf(p), ownerOf(p)].filter(Boolean).join(' | '), p.note, (dateOf(p) + ' ' + timeOf(p)).trim(), p.address].filter(s => s && s.trim())].join('\n'));
     } else if (act === 'save') {
       download((await annFiles([p]))[0]); toast('Opgeslagen in Downloads');
     } else if (act === 'orig') {
@@ -1793,5 +1830,6 @@ function init() {
   show('Camera');
   if (!S.project) setTimeout(() => pickProject(), 400);
   setTimeout(processPending, 3000);
+  setTimeout(refreshAllBars, 5000);
 }
 init();
