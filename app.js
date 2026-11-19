@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '3.8';
+const APP_VERSION = '3.9';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1601,8 +1601,9 @@ function mailBody(items, rt) {
     const meta = [nrOf(p), statusOf(p), ownerOf(p), many ? p.project : ''].filter(Boolean).join(' | '); // leeg = weglaten
     return text ? `• ${text}\n      ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
   });
-  // Notities Algemeen: titel en meteen de lijst. Projecten: titel, aantallen en filter (geen periode).
-  const head = rt.general ? [rt.title, ''] : [rt.title, '', ...[rt.counts, rt.filter].filter(Boolean), ''];
+  // mailtekst: titel, lege regel, meteen de lijst (geen aantallen of filters)
+  const head = [rt.title, ''];
+
   return [...head, ...blocks.join('\n\n').split('\n')].join('\n');
 }const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
 async function buildExcel(list, note = '', notes = []) {
