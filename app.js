@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '3.5';
+const APP_VERSION = '3.6';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -678,19 +678,15 @@ const ownerBtn = (owner, onclick) => {
   b.onclick = () => onclick(b);
   return b;
 };
+/* editor: project, status en eigenaar als uitklaplijsten */
 function renderTags() {
-  const box = $('#edTags'); box.replaceChildren();
-  for (const t of S.tags) {
-    const on = ED.draft.tags.includes(t);
-    const b = el('button', { class: 'tag' + (on ? ' on' : ''), style: `--c:${tagColor(t)}` }, t);
-    b.addEventListener('pointerdown', e => e.preventDefault()); // toetsenbord open houden
-    b.addEventListener('click', () => { // één status per foto; nogmaals tikken = geen status
-      ED.draft.tags = ED.draft.tags.includes(t) ? [] : [t];
-      ED.dirty = true; renderTags();
-    });
-    box.append(b);
-  }
-  box.append(ownerBtn(ED.draft.owner, b => ownerMenu(b, ED.draft.owner, v => { ED.draft.owner = v; ED.dirty = true; renderTags(); })));
+  const box = $('#edTags'), d = ED.draft;
+  const pb = el('button', { class: 'tag projsel' }, ico('folder'), el('span', {}, d.project), ico('chevronDown'));
+  pb.addEventListener('pointerdown', e => e.preventDefault()); // toetsenbord open houden
+  pb.onclick = () => editorProjectChange(pb);
+  box.replaceChildren(pb,
+    statusBtn(d.tags[0] || '', b => statusMenu(b, d.tags[0] || '', v => { d.tags = v ? [v] : []; ED.dirty = true; renderTags(); })),
+    ownerBtn(d.owner, b => ownerMenu(b, d.owner, v => { d.owner = v; ED.dirty = true; renderTags(); })));
 }
 function editorCancel() {
   const d = ED.draft; if (!d) return;
@@ -711,7 +707,13 @@ async function editorSave() {
   const isNew = !d.id, orig = d.origBlob;
   busy('Opslaan…');
   let rec;
-  try { rec = await saveDraft(d, ED.bmp); toast(`#${rec.nr} opgeslagen`); }
+  try {
+    const moved = d.id && d.movedFrom != null && d.movedFrom !== d.project;
+    if (moved) d.nr = await nextNr(d.project); // nieuw volgnummer in het andere project
+    rec = await saveDraft(d, ED.bmp);
+    toast(moved ? `Verplaatst naar ${rec.project} als #${rec.nr}` : `#${rec.nr} opgeslagen`, true, 2400);
+    S.flashId = rec.id;
+  }
   catch (e) { busy(); alert('Opslaan mislukt: ' + e.message); return; }
   busy(); closeEditor();
   autoExport(rec, orig, isNew);
@@ -737,10 +739,24 @@ function editorLocationSheet() {
     d.lat != null || d.wantPos ? bigBtn('ban', 'Geen locatie op deze foto', () => { Object.assign(d, { lat: null, lon: null, acc: null, address: null, wantPos: false }); closeSheet(); updateEdInfo(); }) : null,
   ), null, $('#edLoc'));
 }
-async function editorProjectChange() {
-  if (ED.draft.id) { toast('Project wijzigen kan enkel bij een nieuwe foto', false); return; }
-  const p = await pickProject($('#edTitle'));
-  if (p && ED.draft) { ED.draft.project = p; updateEdInfo(); }
+/* Project van de foto wijzigen. Bestaande foto: verplaatsen naar een ander project (krijgt daar een nieuw volgnummer). */
+async function editorProjectChange(anchor = $('#edTitle')) {
+  const d = ED.draft; if (!d) return;
+  if (!d.id) { const p = await pickProject(anchor); if (p && ED.draft) { d.project = p; updateEdInfo(); renderTags(); } return; }
+  projectPick(anchor, d.project, p => {
+    if (p === d.project) return;
+    if (d.movedFrom == null) d.movedFrom = d.project;
+    d.project = p; ED.dirty = true;
+    updateEdInfo(); renderTags();
+    if (p !== d.movedFrom) toast(`Wordt verplaatst naar "${p}" bij opslaan`, true, 2600);
+  });
+}
+/* eenvoudige projectlijst (zonder het actieve project te wijzigen) */
+function projectPick(anchor, current, onPick) {
+  openSheet(el('div', { class: 'menu' },
+    el('h4', {}, 'Project'),
+    ...S.projects.map(p => el('button', { class: 'menu-item plain', onclick: () => { closeSheet(); onPick(p); } }, ico('folder'), p, p === current ? ico('check') : null)),
+  ), null, anchor);
 }
 
 /* ---------------- opslaan + foto met balk renderen ---------------- */
@@ -1119,7 +1135,7 @@ async function loadNotes() {
   const box = $('#ntList'); box.replaceChildren();
   for (const n of list) {
     const isPhoto = n.kind !== 'note', st = statusOf(n);
-    const row = el('div', { class: 'nt-row' + (isPhoto ? ' is-photo' : ' is-note') });
+    const row = el('div', { class: 'nt-row' + (isPhoto ? ' is-photo' : ' is-note'), 'data-id': n.id });
     // enkel het statuslampje (zoals op het raster in Exports); tikken = status kiezen
     const stBtn = el('button', { class: 'nt-dot' + (st ? '' : ' none'), style: st ? `--c:${tagColor(st)}` : null, 'aria-label': st || 'Status kiezen', title: st || 'Geen status',
       onclick: e => { e.stopPropagation(); noteStatusMenu(stBtn, n); } });
@@ -1141,6 +1157,7 @@ async function loadNotes() {
     box.append(row);
   }
   $('#ntEmpty').classList.toggle('hidden', list.length > 0);
+  flashChanged('#ntList', 'Notes');
   renderNoteTags();
   const tp = ntTargetProject();
   $('#ntText').placeholder = tp ? `Nieuwe losse notitie voor ${tp}` : 'Nieuwe losse notitie (kies eerst een project)';
@@ -1165,6 +1182,19 @@ async function afterNoteChange(id, deleted) {
   const i = S.list.findIndex(x => x.id === id), fresh = await getNote(id);
   if (i >= 0 && fresh) S.list[i] = { ...fresh, kind: 'note' };
   openViewer(id);
+}
+/* Na een aanpassing: in de lijst naar die regel scrollen en ze kort laten oplichten
+   (handig als de lijst op status gesorteerd is en de regel daardoor verschuift). */
+function flashChanged(box, screen) {
+  if (!S.flashId || S.screen !== screen) return;
+  const elx = document.querySelector(`${box} [data-id="${S.flashId}"]`);
+  S.flashId = null;
+  if (!elx) return;
+  requestAnimationFrame(() => {
+    elx.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    elx.classList.remove('flash'); void elx.offsetWidth; elx.classList.add('flash');
+    setTimeout(() => elx.classList.remove('flash'), 1800);
+  });
 }
 function viewerBack() {
   if (S.viewReturn === 'Notes') { show('Notes'); loadNotes(); }
@@ -1202,7 +1232,7 @@ async function addNote() {
   if (!project) { project = await pickProject($('#ntProject')); if (!project) return; }
   const n = { id: newId(), kind: 'note', project, nr: await nextNoteNr(project), text, tags: NT.status ? [NT.status] : [], owner: NT.owner || '', createdAt: Date.now() };
   await putNote(n);
-  addProject(project);
+  addProject(project); S.flashId = n.id;
   $('#ntText').value = ''; NT.status = ''; NT.owner = ''; renderNoteTags();
   toast(`Notitie ${nrOf(n)} toegevoegd`);
   await loadNotes();
@@ -1215,7 +1245,7 @@ function noteStatusMenu(anchor, n) {
       p.tags = t ? [t] : []; busy('Opslaan…');
       try { await rerender(p); } finally { busy(); }
     } else await putNote({ ...n, tags: t ? [t] : [], updatedAt: Date.now() });
-    loadNotes();
+    S.flashId = n.id; loadNotes();
   };
   openSheet(el('div', { class: 'menu' },
     ...S.tags.map(t => el('button', { class: 'menu-item', style: `--c:${tagColor(t)}`, onclick: () => pick(t) }, el('i'), t, statusOf(n) === t ? ico('check') : null)),
@@ -1227,7 +1257,7 @@ function noteProjectMenu(anchor, n) {
     closeSheet();
     if (p === n.project) return;
     await putNote({ ...n, project: p, nr: await nextNoteNr(p), updatedAt: Date.now() });
-    loadNotes();
+    S.flashId = n.id; loadNotes();
   };
   openSheet(el('div', { class: 'menu' },
     el('h4', {}, 'Project'),
@@ -1261,7 +1291,7 @@ function editNote(anchor, n) {
       el('button', { class: 'primary', style: 'flex:1', onclick: async () => {
         const t = ta.value.trim(); if (!t) return;
         const { kind, ...rest } = n;
-        await putNote({ ...rest, text: t, tags: st.tags, owner: st.owner, updatedAt: Date.now() }); closeSheet(); afterNoteChange(n.id);
+        await putNote({ ...rest, text: t, tags: st.tags, owner: st.owner, updatedAt: Date.now() }); closeSheet(); S.flashId = n.id; afterNoteChange(n.id);
       } }, 'Opslaan')),
   ), null, anchor);
 }
@@ -1308,7 +1338,7 @@ function renderGrid() {
   g.classList.toggle('selecting', S.selecting);
   for (const p of S.list) {
     if (p.kind === 'note') { // losse notitie: tekstkaartje, ook selecteerbaar (komt enkel in de tabellen)
-      const cell = el('div', { class: 'cell note-cell' + (S.selected.has(p.id) ? ' sel' : '') },
+      const cell = el('div', { class: 'cell note-cell' + (S.selected.has(p.id) ? ' sel' : ''), 'data-id': p.id },
         el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 12) + '  ' : '') + nrOf(p)),
         p.tags.length ? el('span', { class: 'dots' }, p.tags.map(t => el('i', { style: `background:${tagColor(t)}` }))) : null,
         el('span', { class: 'note-ic' }, ico('list')),
@@ -1322,7 +1352,7 @@ function renderGrid() {
       continue;
     }
     const u = URL.createObjectURL(p.thumb); gridUrls.push(u);
-    const cell = el('div', { class: 'cell' + (S.selected.has(p.id) ? ' sel' : '') },
+    const cell = el('div', { class: 'cell' + (S.selected.has(p.id) ? ' sel' : ''), 'data-id': p.id },
       el('img', { src: u, alt: '', loading: 'lazy' }),
       el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 12) + '  ' : '') + '#' + p.nr),
       p.tags.length ? el('span', { class: 'dots' }, p.tags.map(t => el('i', { style: `background:${tagColor(t)}` }))) : null,
@@ -1334,6 +1364,7 @@ function renderGrid() {
     g.append(cell);
   }
   $('#ovEmpty').classList.toggle('hidden', S.list.length > 0);
+  flashChanged('#ovGrid', 'Overview');
   updateActions();
 }
 function toggleSel(id, force) {
@@ -1845,7 +1876,7 @@ function wire() {
   $('#edSave').onclick = editorSave;
   $('#edCancel').onclick = editorCancel;
   $('#edLoc').onclick = editorLocationSheet;
-  $('#edTitle').onclick = editorProjectChange;
+  $('#edTitle').onclick = () => editorProjectChange($('#edTitle'));
 
   $('#ovBack').onclick = () => show('Camera');
   $('#ovSelect').onclick = () => setSelecting(!S.selecting);
