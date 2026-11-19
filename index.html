@@ -20,21 +20,21 @@
     <button id="btnSettings" class="glass" aria-label="Instellingen"><i data-i="settings"></i></button>
   </header>
   <div class="home-main">
-    <div class="big-opts">
+    <div class="big-opts three">
       <div class="opt">
-        <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
-        <div class="home-label">Foto nemen</div>
+        <button id="btnGallery" class="shutter" aria-label="Uit galerij"><i data-i="image"></i></button>
+        <div class="home-label">Uit galerij</div>
       </div>
       <div class="opt">
         <button id="btnNotes" class="shutter" aria-label="Notities"><i data-i="list"></i><span id="ntCount" class="cnt badge"></span></button>
         <div class="home-label">Notities</div>
       </div>
+      <div class="opt">
+        <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
+        <div class="home-label">Foto nemen</div>
+      </div>
     </div>
   </div>
-  <footer class="home-bottom">
-    <button id="btnGallery" class="tile" aria-label="Foto uit galerij"><span class="tile-ic"><i data-i="image"></i></span><span>Uit galerij</span></button>
-    <button id="btnOverview" class="tile" aria-label="Exports"><span class="tile-ic thumbbtn"><i data-i="grid"></i><img id="lastThumb" alt="" hidden></span><span>Exports</span><span id="count" class="cnt"></span></button>
-  </footer>
   <div class="brand">Gard&amp;Co</div>
   <input type="file" id="fileGallery" accept="image/*" hidden>
   <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
@@ -73,38 +73,20 @@
   </div>
 </section>
 
-<!-- ============ OVERZICHT ============ -->
-<section id="scrOverview" class="screen">
-  <header class="bar">
-    <button id="ovBack" class="ibtn" aria-label="Terug"><i data-i="chevronLeft"></i></button>
-    <div class="select-wrap"><select id="ovProject"></select><i data-i="chevronDown"></i></div>
-    <button id="ovSelect" class="text-btn">Selecteer</button>
-    <button id="ovMenu" class="ibtn" aria-label="Meer"><i data-i="more"></i></button>
-  </header>
-  <div id="ovFilter" class="filter-bar"></div>
-  <input type="file" id="fileImport" accept="image/jpeg" multiple hidden>
-  <div id="ovGrid" class="grid"></div>
-  <div id="ovEmpty" class="empty hidden">Nog geen foto's of notities in dit project.</div>
-  <footer class="actions" id="ovActions">
-    <button data-act="share"><i data-i="share"></i><span>Delen</span></button>
-    <button data-act="save"><i data-i="download"></i><span>Opslaan</span></button>
-    <button data-act="excel"><i data-i="sheet"></i><span>Excel</span></button>
-    <button data-act="pdf"><i data-i="doc"></i><span>PDF</span></button>
-    <button data-act="word"><i data-i="word"></i><span>Word</span></button>
-    <button data-act="zip"><i data-i="archive"></i><span>ZIP</span></button>
-    <button data-act="delete" class="sel-only danger"><i data-i="trash"></i><span>Wis</span></button>
-  </footer>
-</section>
-
 <!-- ============ NOTITIELIJST ============ -->
 <section id="scrNotes" class="screen">
   <header class="bar">
     <button id="ntBack" class="ibtn" aria-label="Terug"><i data-i="chevronLeft"></i></button>
     <div class="select-wrap"><select id="ntProject"></select><i data-i="chevronDown"></i></div>
+    <button id="ntView" class="ibtn" aria-label="Tegelweergave"><i data-i="grid"></i></button>
+    <button id="ntSelect" class="text-btn">Selecteer</button>
+    <button id="ntExport" class="text-btn exp-btn"><i data-i="share"></i><span>Export</span></button>
   </header>
   <div id="ntFilter" class="filter-bar"></div>
+  <input type="file" id="fileImport" accept="image/jpeg" multiple hidden>
   <div id="ntList" class="nt-list"></div>
-  <div id="ntEmpty" class="empty hidden">Nog geen notities.</div>
+  <div id="ntGrid" class="grid hidden"></div>
+  <div id="ntEmpty" class="empty hidden">Nog geen foto's of notities.</div>
   <div class="tags" id="ntTags"></div>
   <div class="note-row">
     <textarea id="ntText" rows="2" placeholder="Nieuwe notitie" enterkeyhint="enter"></textarea>

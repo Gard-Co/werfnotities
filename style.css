@@ -352,3 +352,27 @@ img { -webkit-touch-callout:none; }
   background:var(--surface-2); color:#f5b400; font-weight:600; text-align:left; }
 .sel-btn span { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sel-btn .ic { width:16px; height:16px; color:var(--fg-2); flex:none; }
+/* ---------- v4.0: Notities = lijst of tegels + export; startscherm 3 knoppen ---------- */
+#scrNotes .bar { gap:6px; }
+#scrNotes .bar .text-btn { padding:0 11px; font-size:13.5px; flex:none; }
+.exp-btn { display:flex; align-items:center; gap:6px; }
+.exp-btn .ic { width:16px; height:16px; }
+#scrNotes .grid { flex:1; }
+.nt-row { position:relative; }
+.nt-row .chk { display:none; position:absolute; right:12px; top:50%; transform:translateY(-50%); width:24px; height:24px; border-radius:50%;
+  border:1.5px solid var(--fg-2); place-items:center; }
+.nt-list.selecting .nt-row .chk { display:grid; }
+.nt-list.selecting .nt-row { padding-right:48px; }
+.nt-row.sel { background:rgba(255,255,255,.06); }
+.nt-row.sel .chk { background:#fff; border-color:#fff; color:#000; }
+.nt-row .chk .ic { width:14px; height:14px; stroke-width:3; opacity:0; }
+.nt-row.sel .chk .ic { opacity:1; }
+#scrNotes.selecting #ntTags, #scrNotes.selecting .note-row { display:none; }
+.menu-item.danger, .menu-item.danger .ic { color:var(--danger); }
+.big-opts.three { gap:clamp(12px, 2.6vh, 26px); }
+.big-opts.three .shutter { width:clamp(96px, 13.5vh, 132px); height:clamp(96px, 13.5vh, 132px); }
+.big-opts.three .shutter .ic { width:clamp(36px, 5vh, 48px); height:clamp(36px, 5vh, 48px); }
+.big-opts.three .home-label { font-size:15.5px; margin-top:2px; }
+.big-opts.three .opt { gap:8px; }
+#ntSelect.icon-only { width:40px; padding:0; display:grid; place-items:center; }
+#ntSelect.icon-only .ic { width:20px; height:20px; }

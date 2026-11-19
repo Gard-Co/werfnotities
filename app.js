@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '3.9';
+const APP_VERSION = '4.0';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -79,7 +79,8 @@ const S = {
   pos: null, gpsWatch: null,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
-  people: LS.get('people', []), // personen aan wie een notitie toegewezen kan worden (eigenaar)
+  people: LS.get('people', []),
+  ntView: LS.get('ntView', 'list'), // notities: 'list' of 'tiles' // personen aan wie een notitie toegewezen kan worden (eigenaar)
   ntProject: null, ntStatus: new Set(), ntOwner: new Set(), ovOwner: new Set(),
   ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'date'
   viewId: null,
@@ -230,8 +231,7 @@ window.addEventListener('popstate', () => {
   if (sheetOpen()) closeSheet(true);
   else if (S.screen === 'Editor') { if (ED.cropMode) setCropMode(false); else editorCancel(); }
   else if (S.screen === 'Viewer') viewerBack();
-  else if (S.screen === 'Overview') { if (S.selecting) setSelecting(false); else show('Camera'); }
-  else if (S.screen === 'Notes') show('Camera');
+  else if (S.screen === 'Notes') { if (S.selecting) setSelecting(false); else show('Camera'); }
   if (S.screen !== 'Camera' || sheetOpen()) armBack();
 });
 
@@ -316,7 +316,7 @@ async function processPending() {
         const cur = await getPhoto(p.id); if (cur) { cur.geoFail = (cur.geoFail || 0) + 1; await putPhoto(cur); }
       }
     }
-    if (S.screen === 'Overview') loadOverview();
+    if (S.screen === 'Notes') loadNotes();
   } finally { geoBusy = false; }
 }
 
@@ -354,15 +354,12 @@ async function importFile(f, source) {
 async function refreshCamBar() {
   $('#projName').textContent = S.project || 'Kies project';
   const mine = (await getAllPhotos()).filter(p => p.project === S.project).sort((a, b) => b.createdAt - a.createdAt);
-  $('#count').textContent = ''; // geen aantal op de knop Exports
+
   // teller op de knop Notities: losse notities + fotonotities van dit project
   const nNotes = (await getAllNotes()).filter(n => n.project === S.project).length + mine.length;
   $('#ntCount').textContent = nNotes || '';
-  const img = $('#lastThumb');
-  if (img.dataset.u) URL.revokeObjectURL(img.dataset.u);
-  if (mine[0]) { const u = URL.createObjectURL(mine[0].thumb); img.src = u; img.dataset.u = u; img.hidden = false; }
-  else { img.hidden = true; img.removeAttribute('src'); delete img.dataset.u; }
 }
+
 
 /* ---------------- projecten ---------------- */
 function addProject(p) {
@@ -391,7 +388,7 @@ async function renameProject(old) {
   S.projects = S.projects.map(x => (x === old ? nu : x)); LS.set('projects', S.projects);
   if (S.project === old) { S.project = nu; LS.set('project', nu); }
   if (S.ovProject === old) S.ovProject = nu;
-  if (S.ntProject === old) S.ntProject = nu;
+  if (S.ovProject === old) S.ovProject = nu;
   refreshCamBar(); if (S.screen === 'Overview') loadOverview(); if (S.screen === 'Notes') loadNotes();
   toast(`Project heet nu "${nu}"`);
   return true;
@@ -1008,34 +1005,14 @@ async function importAnnotated(files) {
   if (noMeta) parts.push(`${noMeta} zonder notitie-info overgeslagen`);
   if (noMeta && !added) alert(parts.join('\n') + '\n\nAlleen foto\'s die met deze app (versie 1.2 of later) zijn opgeslagen of gedeeld, bevatten de info. Via WhatsApp verstuurde foto\'s verliezen die info.');
   else toast(parts.join(' · '), added > 0, 3000);
-  if (S.screen === 'Overview') loadOverview(); else refreshCamBar();
+  if (S.screen === 'Notes') loadNotes(); else refreshCamBar();
 }
 
 /* ---------------- overzicht ---------------- */
 let gridUrls = [];
-async function openOverview() {
-  S.ovProject = S.project || '__all__'; S.ovStatus.clear(); S.ovOwner.clear(); S.viewReturn = 'Overview';
-  setSelecting(false, true);
-  show('Overview');
-  await loadOverview();
-}
-async function loadOverview() {
-  const photosAll = await getAllPhotos(), notesAll = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
-  const all = [...photosAll, ...notesAll], noteProjs = new Set(notesAll.map(n => n.project));
-  const counts = {};
-  all.forEach(p => { counts[p.project] = (counts[p.project] || 0) + 1; });
-  const projects = [...new Set([...S.projects, ...Object.keys(counts), ...noteProjs])].filter(p => counts[p] || noteProjs.has(p) || p === S.project);
-  const sel = $('#ovProject'); sel.replaceChildren();
-  sel.append(el('option', { value: '__all__' }, `Alle projecten (${all.length})`));
-  projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
-  if (S.ovProject !== '__all__' && !projects.includes(S.ovProject)) S.ovProject = '__all__';
-  sel.value = S.ovProject; syncSelBtn(sel);
-  const inProj = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject); // foto's + losse notities
-  renderFilter(inProj);
-  S.list = inProj.filter(p => (!S.ovStatus.size || S.ovStatus.has(statusOf(p))) && ownerOk(S.ovOwner, p)).sort(listOrder);
-  for (const id of [...S.selected]) if (!S.list.some(p => p.id === id)) S.selected.delete(id);
-  renderGrid();
-}
+// Exports zit nu in Notities (weergave lijst of tegels); oude namen blijven werken
+const openOverview = () => openNotes();
+const loadOverview = () => loadNotes();
 /* ---- status-filter + volgorde (bepaalt ook de volgorde van PDF, Excel, ZIP en delen) ---- */
 const statusOf = p => p.tags?.[0] || '';
 const statusRank = p => { const t = statusOf(p); if (!t) return 999; const i = S.tags.indexOf(t); return i < 0 ? 900 : i; };
@@ -1110,63 +1087,83 @@ function filterDesc() {
 /* ---------------- notitielijst: losse notities zonder foto ---------------- */
 const NT = { status: '', owner: '' };
 const nextNoteNr = project => nextNr(project); // zelfde volgnummer voor foto's en losse notities
-const ntTargetProject = () => (S.ntProject && S.ntProject !== '__all__' ? S.ntProject : S.project);
+const ntTargetProject = () => (S.ovProject && S.ovProject !== '__all__' ? S.ovProject : S.project);
 async function openNotes() {
-  S.ntProject = S.project || '__all__'; S.ntStatus.clear(); S.ntOwner.clear(); NT.status = ''; NT.owner = '';
+  S.ovProject = S.project || '__all__'; S.ovStatus.clear(); S.ovOwner.clear(); NT.status = ''; NT.owner = '';
+  S.viewReturn = 'Notes';
+  setSelecting(false, true);
   $('#ntText').value = '';
   show('Notes');
   await loadNotes();
 }
-/* Notitielijst toont alles: losse notities én de notities op foto's (fotonotities). */
+/* Notities: alles van het project (fotonotities + losse notities), als lijst of als tegels. */
 let ntUrls = [];
 async function loadNotes() {
   const notes = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
   const photos = await getAllPhotos();
-  const all = [...notes, ...photos];
+  const all = [...photos, ...notes];
   const counts = {};
   all.forEach(n => { counts[n.project] = (counts[n.project] || 0) + 1; });
   const projects = [...new Set([...S.projects, ...Object.keys(counts)])];
   const sel = $('#ntProject'); sel.replaceChildren();
   sel.append(el('option', { value: '__all__' }, `Alle projecten (${all.length})`));
   projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
-  if (S.ntProject !== '__all__' && !projects.includes(S.ntProject)) S.ntProject = '__all__';
-  sel.value = S.ntProject; syncSelBtn(sel);
-  const inProj = all.filter(n => S.ntProject === '__all__' || n.project === S.ntProject);
-  renderFilter(inProj, '#ntFilter', S.ntStatus, loadNotes, S.ntOwner);
-  const list = inProj.filter(n => (!S.ntStatus.size || S.ntStatus.has(statusOf(n))) && ownerOk(S.ntOwner, n)).sort(listOrder);
-  ntUrls.forEach(u => URL.revokeObjectURL(u)); ntUrls = [];
-  const box = $('#ntList'); box.replaceChildren();
-  for (const n of list) {
-    const isPhoto = n.kind !== 'note', st = statusOf(n);
-    const row = el('div', { class: 'nt-row' + (isPhoto ? ' is-photo' : ' is-note'), 'data-id': n.id });
-    // enkel het statuslampje (zoals op het raster in Exports); tikken = status kiezen
-    const stBtn = el('button', { class: 'nt-dot' + (st ? '' : ' none'), style: st ? `--c:${tagColor(st)}` : null, 'aria-label': st || 'Status kiezen', title: st || 'Geen status',
-      onclick: e => { e.stopPropagation(); noteStatusMenu(stBtn, n); } });
-    let lead, open;
-    if (isPhoto) {
-      const u = URL.createObjectURL(n.thumb); ntUrls.push(u);
-      open = () => openPhotoFromNotes(n.id, list);
-      lead = el('button', { class: 'nt-lead', 'aria-label': 'Foto openen', onclick: open }, el('img', { src: u, alt: '' }), el('span', { class: 'nt-cam' }, ico('camera')));
-    } else {
-      open = () => editNote(row, n);
-      lead = el('button', { class: 'nt-lead', 'aria-label': 'Notitie bewerken', onclick: open }, ico('list'));
-    }
-    // projectnaam enkel bij "Alle projecten"; datum/uur zie je pas als je de notitie opent
-    const text = isPhoto ? n.note : n.text;
-    row.append(lead, el('div', { class: 'nt-main', onclick: open },
-      el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, nrOf(n)), n.owner ? el('span', { class: 'nt-owner' }, ico('user'), n.owner) : null),
-      text ? el('div', { class: 'nt-text' }, text) : null,
-      S.ntProject === '__all__' ? el('div', { class: 'nt-sub' }, el('span', { class: 'nt-proj' }, n.project)) : null));
-    box.append(row);
-  }
-  $('#ntEmpty').classList.toggle('hidden', list.length > 0);
-  flashChanged('#ntList', 'Notes');
+  if (S.ovProject !== '__all__' && !projects.includes(S.ovProject)) S.ovProject = '__all__';
+  sel.value = S.ovProject; syncSelBtn(sel);
+  const inProj = all.filter(n => S.ovProject === '__all__' || n.project === S.ovProject);
+  renderFilter(inProj, '#ntFilter', S.ovStatus, loadNotes, S.ovOwner);
+  S.list = inProj.filter(n => (!S.ovStatus.size || S.ovStatus.has(statusOf(n))) && ownerOk(S.ovOwner, n)).sort(listOrder);
+  for (const id of [...S.selected]) if (!S.list.some(p => p.id === id)) S.selected.delete(id);
+  renderView();
   renderNoteTags();
   const tp = ntTargetProject();
   $('#ntText').placeholder = tp ? `Nieuwe losse notitie voor ${tp}` : 'Nieuwe losse notitie (kies eerst een project)';
   refreshCamBar();
 }
-/* Openen vanuit de notitielijst: vegen gaat door de hele lijst (fotonotities én losse notities), terug = notitielijst. */
+/* weergave: 'list' (lijst) of 'tiles' (tegels zoals vroeger in Exports) */
+function renderView() {
+  const tiles = S.ntView === 'tiles';
+  $('#ntList').classList.toggle('hidden', tiles);
+  $('#ntGrid').classList.toggle('hidden', !tiles);
+  $('#ntView').replaceChildren(ico(tiles ? 'list' : 'grid'));
+  $('#ntView').setAttribute('aria-label', tiles ? 'Lijstweergave' : 'Tegelweergave');
+  if (tiles) renderGrid(); else renderList();
+  $('#ntEmpty').classList.toggle('hidden', S.list.length > 0);
+  updateActions();
+}
+function renderList() {
+  const list = S.list;
+  ntUrls.forEach(u => URL.revokeObjectURL(u)); ntUrls = [];
+  const box = $('#ntList'); box.replaceChildren();
+  box.classList.toggle('selecting', S.selecting);
+  for (const n of list) {
+    const isPhoto = n.kind !== 'note', st = statusOf(n);
+    const row = el('div', { class: 'nt-row' + (isPhoto ? ' is-photo' : ' is-note') + (S.selected.has(n.id) ? ' sel' : ''), 'data-id': n.id });
+    // enkel het statuslampje; tikken = status kiezen
+    const stBtn = el('button', { class: 'nt-dot' + (st ? '' : ' none'), style: st ? `--c:${tagColor(st)}` : null, 'aria-label': st || 'Status kiezen', title: st || 'Geen status',
+      onclick: e => { e.stopPropagation(); if (S.selecting) toggleSel(n.id); else noteStatusMenu(stBtn, n); } });
+    const open = () => { if (S.selecting) { toggleSel(n.id); return; } if (isPhoto) openPhotoFromNotes(n.id, list); else editNote(row, n); };
+    let lead;
+    if (isPhoto) {
+      const u = URL.createObjectURL(n.thumb); ntUrls.push(u);
+      lead = el('button', { class: 'nt-lead', 'aria-label': 'Foto openen', onclick: open }, el('img', { src: u, alt: '' }), el('span', { class: 'nt-cam' }, ico('camera')));
+    } else {
+      lead = el('button', { class: 'nt-lead', 'aria-label': 'Notitie bewerken', onclick: open }, ico('list'));
+    }
+    const text = isPhoto ? n.note : n.text;
+    const main = el('div', { class: 'nt-main', onclick: open },
+      el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, nrOf(n)), n.owner ? el('span', { class: 'nt-owner' }, ico('user'), n.owner) : null),
+      text ? el('div', { class: 'nt-text' }, text) : null,
+      S.ovProject === '__all__' ? el('div', { class: 'nt-sub' }, el('span', { class: 'nt-proj' }, n.project)) : null);
+    row.append(lead, main, el('span', { class: 'chk' }, ico('check')));
+    // lang drukken = selecteren
+    let t; row.addEventListener('pointerdown', () => { t = setTimeout(() => { navigator.vibrate?.(30); if (!S.selecting) setSelecting(true, true); toggleSel(n.id, true); row._held = true; }, 550); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => clearTimeout(t)));
+    row.addEventListener('click', e => { if (row._held) { row._held = false; e.stopPropagation(); e.preventDefault(); } }, true);
+    box.append(row);
+  }
+  flashChanged('#ntList', 'Notes');
+}/* Openen vanuit de notitielijst: vegen gaat door de hele lijst (fotonotities én losse notities), terug = notitielijst. */
 function openPhotoFromNotes(id, viewList) {
   S.list = viewList; S.viewReturn = 'Notes';
   openViewer(id);
@@ -1201,7 +1198,7 @@ function flashChanged(box, screen) {
 }
 function viewerBack() {
   if (S.viewReturn === 'Notes') { show('Notes'); loadNotes(); }
-  else { show('Overview'); loadOverview(); }
+  else { show('Notes'); loadNotes(); }
 }/* status kiezen in een uitklaplijst (één keuze) */
 function statusMenu(anchor, current, onPick) {
   const pick = t => { closeSheet(); onPick(t); };
@@ -1337,7 +1334,7 @@ async function exportNotes() {
 const mergeItems = (photos, notes = []) => [...photos, ...notes].sort(S.ovSort === 'status' ? (a, b) => statusRank(a) - statusRank(b) || byNr(a, b) : byNr);
 function renderGrid() {
   gridUrls.forEach(u => URL.revokeObjectURL(u)); gridUrls = [];
-  const g = $('#ovGrid'); g.replaceChildren();
+  const g = $('#ntGrid'); g.replaceChildren();
   g.classList.toggle('selecting', S.selecting);
   for (const p of S.list) {
     if (p.kind === 'note') { // losse notitie: tekstkaartje, ook selecteerbaar (komt enkel in de tabellen)
@@ -1349,8 +1346,8 @@ function renderGrid() {
         p.owner ? el('span', { class: 'note-own' }, '→ ' + p.owner) : null,
         el('span', { class: 'chk' }, ico('check')));
       onTapOrHold(cell, () => {
-        if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Overview'; openViewer(p.id); }
-      }, () => { if (!S.selecting) setSelecting(true); toggleSel(p.id, true); });
+        if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Notes'; openViewer(p.id); }
+      }, () => { if (!S.selecting) setSelecting(true, true); toggleSel(p.id, true); });
       g.append(cell);
       continue;
     }
@@ -1362,37 +1359,34 @@ function renderGrid() {
       el('span', { class: 'cap' }, p.note || `${dateOf(p)} ${timeOf(p)}`),
       el('span', { class: 'chk' }, ico('check')));
     onTapOrHold(cell, () => {
-      if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Overview'; openViewer(p.id); }
-    }, () => { if (!S.selecting) setSelecting(true); toggleSel(p.id, true); });
+      if (S.selecting) toggleSel(p.id); else { S.viewReturn = 'Notes'; openViewer(p.id); }
+    }, () => { if (!S.selecting) setSelecting(true, true); toggleSel(p.id, true); });
     g.append(cell);
   }
-  $('#ovEmpty').classList.toggle('hidden', S.list.length > 0);
-  flashChanged('#ovGrid', 'Overview');
-  updateActions();
+  flashChanged('#ntGrid', 'Notes');
 }
 function toggleSel(id, force) {
   if (force === true || !S.selected.has(id)) S.selected.add(id); else S.selected.delete(id);
-  renderGrid();
+  renderView();
 }
 function setSelecting(on, silent) {
   S.selecting = on; S.selected.clear();
-  $('#ovSelect').classList.toggle('on', on);
-  $('#ovSelect').textContent = on ? 'Klaar' : 'Selecteer';
-  if (!silent) renderGrid();
+  $('#scrNotes').classList.toggle('selecting', on);
+  if (!silent) renderView(); else updateActions();
 }
 function selectAll() {
   setSelecting(true, true);
   S.list.forEach(p => S.selected.add(p.id));
-  renderGrid();
+  renderView();
 }
+/* knop Selecteer toont het aantal; tijdens selecteren is het "Klaar (3)" */
 function updateActions() {
-  const a = $('#ovActions'), n = S.selected.size;
-  a.classList.toggle('selecting', S.selecting && n > 0);
-  const label = S.selecting && n ? ` (${n})` : '';
-  a.querySelectorAll('button').forEach(b => {
-    const base = { share: 'Delen', save: 'Opslaan', excel: 'Excel', pdf: 'PDF', word: 'Word', zip: 'ZIP', delete: 'Wis' }[b.dataset.act];
-    b.querySelector('span').textContent = base + (b.dataset.act === 'share' || b.dataset.act === 'delete' ? label : '');
-  });
+  const b = $('#ntSelect'); if (!b) return;
+  const n = S.selected.size;
+  b.classList.toggle('on', S.selecting);
+  if (S.selecting) b.textContent = n ? `Klaar (${n})` : 'Klaar'; else b.replaceChildren(ico('checkAll'));
+  b.setAttribute('aria-label', S.selecting ? 'Klaar met selecteren' : 'Selecteren');
+  b.classList.toggle('icon-only', !S.selecting);
 }
 function targets() {
   const arr = S.selecting && S.selected.size ? S.list.filter(p => S.selected.has(p.id)) : S.list;
@@ -1416,17 +1410,28 @@ async function annFiles(list) {
   for (const p of list) out.push(new File([await withMeta(await getBlob(p.id + ':ann'), p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
   return out;
 }
-function overviewMenu() {
+/* Export-menu (uitklaplijst onder de knop): zelfde functies als de vroegere pagina Exports */
+function exportMenu() {
   const proj = S.ovProject !== '__all__' ? S.ovProject : null;
-  openSheet(el('div', {},
-    el('h3', {}, 'Meer'),
-    bigBtn('checkAll', 'Alles selecteren', () => { closeSheet(); selectAll(); }),
-    bigBtn('upload', 'Foto\'s met notitie importeren', () => { closeSheet(); $('#fileImport').click(); }),
-    proj ? bigBtn('edit', 'Projectnaam wijzigen', () => { closeSheet(); renameProject(proj); }) : null,
-    proj ? bigBtn('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); })
-      : el('p', {}, 'Kies bovenaan één project om het af te sluiten.'),
-    el('p', {}, 'Importeren: kies foto\'s met notitie die je eerder uit deze app bewaard of gedeeld hebt. Project, nummer, tags, notitie, datum en adres worden teruggelezen, zodat je opnieuw een Excel of PDF kunt maken.'),
-  ), null, $('#ovMenu'));
+  const n = S.selecting && S.selected.size ? S.selected.size : 0;
+  const what = n ? `selectie (${n})` : 'alles in de lijst';
+  const act = a => () => { closeSheet(); ovAction(a); };
+  const item = (icon, label, fn, cls = '') => el('button', { class: 'menu-item plain ' + cls, onclick: fn }, ico(icon), label);
+  openSheet(el('div', { class: 'menu' },
+    el('h4', {}, `Exporteren · ${what}`),
+    item('share', 'Foto\'s delen / mailen', act('share')),
+    item('download', 'Foto\'s opslaan', act('save')),
+    item('sheet', 'Excel', act('excel')),
+    item('doc', 'PDF', act('pdf')),
+    item('word', 'Word', act('word')),
+    item('archive', 'ZIP (alles)', act('zip')),
+    el('h4', { style: 'margin-top:12px' }, 'Meer'),
+    n ? item('trash', `Selectie wissen (${n})`, act('delete'), 'danger') : null,
+    item('checkAll', 'Alles selecteren', () => { closeSheet(); selectAll(); }),
+    item('upload', 'Foto\'s met notitie importeren', () => { closeSheet(); $('#fileImport').click(); }),
+    proj && !isGeneral(proj) ? item('edit', 'Projectnaam wijzigen', () => { closeSheet(); renameProject(proj); }) : null,
+    proj ? item('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); }) : null,
+  ), null, $('#ntExport'));
 }
 async function closeProject(proj) {
   const list = (await getAllPhotos()).filter(p => p.project === proj).sort((a, b) => a.nr - b.nr);
@@ -1446,7 +1451,7 @@ async function closeProject(proj) {
     busy();
     S.projects = S.projects.filter(x => x !== proj); LS.set('projects', S.projects);
     if (S.project === proj) { S.project = ''; LS.set('project', ''); }
-    S.ovProject = '__all__'; setSelecting(false, true); await loadOverview();
+    S.ovProject = '__all__'; setSelecting(false, true); await loadNotes();
     toast(`Project "${proj}" afgesloten`);
   }, 'danger');
   delBtn.disabled = true;
@@ -1572,7 +1577,7 @@ async function ovAction(act) {
       if (!confirm(`${what} definitief uit de app verwijderen?`)) return;
       for (const p of list) await deletePhoto(p.id);
       for (const n of notes) await deleteNote(n.id);
-      setSelecting(false, true); await loadOverview(); toast('Verwijderd');
+      setSelecting(false, true); await loadNotes(); toast('Verwijderd');
     }
   } catch (e) { busy(); alert('Mislukt: ' + e.message); }
 }
@@ -1599,7 +1604,7 @@ function mailBody(items, rt) {
   const blocks = items.map(p => {
     const text = (itemText(p) || '').replace(/\s*\n\s*/g, ' / ');
     const meta = [nrOf(p), statusOf(p), ownerOf(p), many ? p.project : ''].filter(Boolean).join(' | '); // leeg = weglaten
-    return text ? `• ${text}\n      ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
+    return text ? `• ${text}\n  ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
   });
   // mailtekst: titel, lege regel, meteen de lijst (geen aantallen of filters)
   const head = [rt.title, ''];
@@ -1879,10 +1884,9 @@ function wire() {
   $('#btnProject').onclick = () => pickProject();
   $('#btnSettings').onclick = openSettings;
   $('#btnGallery').onclick = () => $('#fileGallery').click();
-  $('#btnOverview').onclick = openOverview;
   $('#btnNotes').onclick = openNotes;
   $('#ntBack').onclick = () => show('Camera');
-  $('#ntProject').onchange = e => { S.ntProject = e.target.value; S.ntStatus.clear(); syncProject(e.target.value); loadNotes(); };
+  $('#ntProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); syncProject(e.target.value); loadNotes(); };
   $('#ntAdd').addEventListener('pointerdown', e => e.preventDefault());
   $('#ntAdd').onclick = addNote;
   $('#ntText').addEventListener('focus', updateComposer);
@@ -1913,11 +1917,9 @@ function wire() {
   $('#edLoc').onclick = editorLocationSheet;
   $('#edTitle').onclick = () => editorProjectChange($('#edTitle'));
 
-  $('#ovBack').onclick = () => show('Camera');
-  $('#ovSelect').onclick = () => setSelecting(!S.selecting);
-  $('#ovMenu').onclick = overviewMenu;
-  $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); syncProject(e.target.value); loadOverview(); };
-  $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
+  $('#ntSelect').onclick = () => setSelecting(!S.selecting);
+  $('#ntExport').onclick = exportMenu;
+  $('#ntView').onclick = () => { S.ntView = S.ntView === 'tiles' ? 'list' : 'tiles'; LS.set('ntView', S.ntView); renderView(); };
   $('#vwBack').onclick = viewerBack;
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });
   $('#vwPrev').onclick = () => viewerStep(-1);
