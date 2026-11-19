@@ -20,12 +20,20 @@
     <button id="btnSettings" class="glass" aria-label="Instellingen"><i data-i="settings"></i></button>
   </header>
   <div class="home-main">
-    <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
-    <div class="home-label">Foto nemen</div>
+    <div class="big-opts">
+      <div class="opt">
+        <button id="btnShutter" class="shutter" aria-label="Foto nemen"><i data-i="camera"></i></button>
+        <div class="home-label">Foto nemen</div>
+      </div>
+      <div class="opt">
+        <button id="btnNotes" class="shutter" aria-label="Notities"><i data-i="list"></i><span id="ntCount" class="cnt badge"></span></button>
+        <div class="home-label">Notities</div>
+      </div>
+    </div>
   </div>
   <footer class="home-bottom">
     <button id="btnGallery" class="tile" aria-label="Foto uit galerij"><span class="tile-ic"><i data-i="image"></i></span><span>Uit galerij</span></button>
-    <button id="btnOverview" class="tile" aria-label="Overzicht"><span class="tile-ic thumbbtn"><i data-i="grid"></i><img id="lastThumb" alt="" hidden></span><span>Overzicht</span><span id="count"></span></button>
+    <button id="btnOverview" class="tile" aria-label="Overzicht"><span class="tile-ic thumbbtn"><i data-i="grid"></i><img id="lastThumb" alt="" hidden></span><span>Overzicht</span><span id="count" class="cnt"></span></button>
   </footer>
   <div class="brand">Gard&amp;Co</div>
   <input type="file" id="fileGallery" accept="image/*" hidden>
@@ -86,6 +94,22 @@
     <button data-act="zip"><i data-i="archive"></i><span>ZIP</span></button>
     <button data-act="delete" class="sel-only danger"><i data-i="trash"></i><span>Wis</span></button>
   </footer>
+</section>
+
+<!-- ============ NOTITIELIJST ============ -->
+<section id="scrNotes" class="screen">
+  <header class="bar">
+    <button id="ntBack" class="ibtn" aria-label="Terug"><i data-i="chevronLeft"></i></button>
+    <div class="select-wrap"><select id="ntProject"></select><i data-i="chevronDown"></i></div>
+  </header>
+  <div id="ntFilter" class="filter-bar"></div>
+  <div id="ntList" class="nt-list"></div>
+  <div id="ntEmpty" class="empty hidden">Nog geen notities.</div>
+  <div class="tags" id="ntTags"></div>
+  <div class="note-row">
+    <textarea id="ntText" rows="2" placeholder="Nieuwe notitie" enterkeyhint="enter"></textarea>
+    <button id="ntAdd" class="save" aria-label="Toevoegen"><i data-i="check"></i></button>
+  </div>
 </section>
 
 <!-- ============ DETAIL ============ -->

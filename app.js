@@ -1,7 +1,7 @@
 'use strict';
 /* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.4';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/>',
   word: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8.5 12 1.2 5 1.3-3.5 1.3 3.5 1.2-5"/>',
   sort: '<path d="M3 6h18M6 12h12M10 18h4"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
@@ -73,12 +74,14 @@ const S = {
   pos: null, gpsWatch: null,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
+  ntProject: null, ntStatus: new Set(),
   ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'date'
   viewId: null,
 };
 const STATUS_COLORS = { nok: '#ef4444', todo: '#f97316', ok: '#22c55e', testen: '#3b82f6' };
 const TAG_COLORS = ['#a855f7', '#14b8a6', '#ec4899', '#64748b', '#84cc16', '#0ea5e9'];
 const tagColor = t => STATUS_COLORS[String(t).toLowerCase()] || TAG_COLORS[Math.max(0, S.tags.indexOf(t)) % TAG_COLORS.length];
+const PROJECT_YELLOW = '#f5b400'; // projectnaam: het enige gele element
 const COLORS = [['#ff3b30', 'Rood'], ['#ff9500', 'Oranje'], ['#ffd60a', 'Geel'], ['#34c759', 'Groen'], ['#0a84ff', 'Blauw'], ['#ffffff', 'Wit'], ['#000000', 'Zwart']];
 
 /* ---------------- opslag (IndexedDB) ---------------- */
@@ -86,8 +89,13 @@ let _db;
 function dbOpen() {
   if (_db) return Promise.resolve(_db);
   return new Promise((res, rej) => {
-    const r = indexedDB.open('werfnotities', 1);
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('photos', { keyPath: 'id' }); d.createObjectStore('blobs'); };
+    const r = indexedDB.open('werfnotities', 2);
+    r.onupgradeneeded = () => {
+      const d = r.result, has = n => d.objectStoreNames.contains(n);
+      if (!has('photos')) d.createObjectStore('photos', { keyPath: 'id' });
+      if (!has('blobs')) d.createObjectStore('blobs');
+      if (!has('notes')) d.createObjectStore('notes', { keyPath: 'id' }); // losse notities zonder foto
+    };
     r.onsuccess = () => { _db = r.result; res(_db); };
     r.onerror = () => rej(r.error);
   });
@@ -99,6 +107,10 @@ const getPhoto = async id => rq((await os('photos')).get(id));
 const putPhoto = async p => rq((await os('photos', 'readwrite')).put(p));
 const getBlob = async k => rq((await os('blobs')).get(k));
 const putBlob = async (k, b) => rq((await os('blobs', 'readwrite')).put(b, k));
+const getAllNotes = async () => rq((await os('notes')).getAll());
+const putNote = async n => rq((await os('notes', 'readwrite')).put(n));
+const deleteNote = async id => rq((await os('notes', 'readwrite')).delete(id));
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 async function deletePhoto(id) {
   const t = (await dbOpen()).transaction(['photos', 'blobs'], 'readwrite');
   t.objectStore('photos').delete(id);
@@ -111,6 +123,12 @@ async function deletePhoto(id) {
 const pad2 = n => String(n).padStart(2, '0');
 const fmtDate = ts => { const d = new Date(ts); return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`; };
 const fmtTime = ts => { const d = new Date(ts); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+// foto uit de galerij zonder opnamedatum: datum en uur weglaten
+const dateOf = p => (p.noDate ? '' : fmtDate(p.createdAt));
+const timeOf = p => (p.noDate ? '' : fmtTime(p.createdAt));
+// notitie aangepast: datum en uur van de laatste aanpassing tonen
+const tsOf = p => (p.kind === 'note' && p.updatedAt ? p.updatedAt : p.createdAt);
+const nrOf = p => (p.kind === 'note' ? 'N' + p.nr : String(p.nr));
 const isoDay = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
 const fmtCoords = (lat, lon) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 const locText = p => p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : 'Geen locatie');
@@ -130,11 +148,27 @@ function busy(msg) { $('#busy').classList.toggle('hidden', !msg); $('#busyMsg').
 const bigBtn = (iconName, label, onclick, cls = '') => el('button', { class: 'big ' + cls, onclick }, ico(iconName), label);
 
 let sheetClose = null;
-function openSheet(content, onDismiss) {
-  $('#sheetBody').replaceChildren(content);
-  $('#sheet').classList.remove('hidden');
+/* anchor: knop waarop getikt werd -> het menu verschijnt als uitklapmenu op die plaats;
+   zonder anchor: paneel onderaan (voor de knoppen onderaan het scherm). */
+function openSheet(content, onDismiss, anchor) {
+  const sh = $('#sheet'), body = $('#sheetBody');
+  body.replaceChildren(content);
+  sh.classList.toggle('pop', !!anchor);
+  body.style.cssText = '';
+  sh.classList.remove('hidden');
+  if (anchor) placePop(body, anchor);
   sheetClose = onDismiss || null;
   armBack();
+}
+function placePop(body, anchor) {
+  const r = anchor.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 8;
+  const w = Math.min(360, vw - 2 * m);
+  body.style.width = w + 'px';
+  const cx = r.left + r.width / 2;
+  body.style.left = Math.round(Math.min(vw - w - m, Math.max(m, cx < vw / 2 ? r.left : r.right - w))) + 'px';
+  const below = vh - r.bottom - m, above = r.top - m;
+  if (below >= 260 || below >= above) { body.style.top = Math.round(r.bottom + 6) + 'px'; body.style.maxHeight = Math.round(below - 6) + 'px'; }
+  else { body.style.bottom = Math.round(vh - r.top + 6) + 'px'; body.style.maxHeight = Math.round(above - 6) + 'px'; }
 }
 function closeSheet(dismissed) {
   if ($('#sheet').classList.contains('hidden')) return;
@@ -168,6 +202,7 @@ window.addEventListener('popstate', () => {
   else if (S.screen === 'Editor') { if (ED.cropMode) setCropMode(false); else editorCancel(); }
   else if (S.screen === 'Viewer') { show('Overview'); loadOverview(); }
   else if (S.screen === 'Overview') { if (S.selecting) setSelecting(false); else show('Camera'); }
+  else if (S.screen === 'Notes') show('Camera');
   if (S.screen !== 'Camera' || sheetOpen()) armBack();
 });
 
@@ -265,12 +300,13 @@ function capture() {
   if (!S.project) { ensureProject(); return; } // eerst project kiezen, daarna opnieuw tikken
   $('#fileCamera').click();
 }
-function newDraft(blob, { source, date, lat, lon, name } = {}) {
-  const usePos = lat == null;
+function newDraft(blob, { source, date, lat, lon, name, noDate } = {}) {
+  // camera: huidige GPS. Galerij: enkel de locatie uit de foto zelf (anders geen locatie).
+  const usePos = source !== 'galerij' && lat == null;
   const p = usePos ? freshPos() : null;
   return {
-    id: null, project: S.project, createdAt: date || Date.now(),
-    lat: usePos ? (p?.lat ?? null) : lat, lon: usePos ? (p?.lon ?? null) : lon, acc: usePos ? (p?.acc ?? null) : null,
+    id: null, project: S.project, createdAt: date || Date.now(), noDate: !!noDate,
+    lat: usePos ? (p?.lat ?? null) : (lat ?? null), lon: usePos ? (p?.lon ?? null) : (lon ?? null), acc: usePos ? (p?.acc ?? null) : null,
     address: null, note: '', tags: [], shapes: [], crop: null, source, origBlob: blob, origName: name || null,
     wantPos: usePos,
   };
@@ -280,13 +316,18 @@ async function importFile(f, source) {
   if (source === 'galerij' && await readMeta(f)) { await importAnnotated([f]); return; } // al een werfnotitie
   if (!(await ensureProject())) return;
   const ex = source === 'galerij' ? await readExif(f) : {};
-  openEditor(newDraft(f, { source, date: ex.date || (source === 'galerij' ? f.lastModified : Date.now()), lat: ex.lat, lon: ex.lon, name: f.name }));
+  // galerij: datum en locatie van de foto zelf; ontbreekt die info, dan wordt ze weggelaten
+  const gal = source === 'galerij';
+  openEditor(newDraft(f, { source, name: f.name, lat: ex.lat, lon: ex.lon,
+    date: ex.date || (gal ? f.lastModified : Date.now()), noDate: gal && !ex.date }));
 }
 
 async function refreshCamBar() {
   $('#projName').textContent = S.project || 'Kies project';
   const mine = (await getAllPhotos()).filter(p => p.project === S.project).sort((a, b) => b.createdAt - a.createdAt);
   $('#count').textContent = mine.length || '';
+  const nNotes = (await getAllNotes()).filter(n => n.project === S.project).length;
+  $('#ntCount').textContent = nNotes || '';
   const img = $('#lastThumb');
   if (img.dataset.u) URL.revokeObjectURL(img.dataset.u);
   if (mine[0]) { const u = URL.createObjectURL(mine[0].thumb); img.src = u; img.dataset.u = u; img.hidden = false; }
@@ -299,27 +340,31 @@ function addProject(p) {
   LS.set('projects', S.projects);
 }
 function setProject(p) { S.project = p; LS.set('project', p); addProject(p); refreshCamBar(); }
+// een project kiezen in Overzicht of Notities = ook het actieve project op het startscherm en in het andere scherm
+function syncProject(v) { if (v && v !== '__all__' && v !== S.project) setProject(v); }
 /* Projectnaam wijzigen: ook in alle foto's (de balk onder de foto wordt opnieuw gemaakt). */
 async function renameProject(old) {
   const v = prompt(`Nieuwe naam voor project "${old}":`, old);
   const nu = (v || '').trim();
   if (!nu || nu === old) return false;
-  const all = await getAllPhotos();
-  if (S.projects.includes(nu) || all.some(p => p.project === nu)) { alert(`Er bestaat al een project "${nu}".`); return false; }
+  const all = await getAllPhotos(), notes = await getAllNotes();
+  if (S.projects.includes(nu) || all.some(p => p.project === nu) || notes.some(n => n.project === nu)) { alert(`Er bestaat al een project "${nu}".`); return false; }
   const mine = all.filter(p => p.project === old);
   busy(`Naam wijzigen (${plural(mine.length, 'foto', 'foto\'s')})…`);
   try {
     for (const p of mine) { p.project = nu; await rerender(p); }
+    for (const n of notes.filter(n => n.project === old)) { n.project = nu; await putNote(n); }
   } catch (e) { busy(); alert('Naam wijzigen mislukt: ' + e.message); return false; }
   busy();
   S.projects = S.projects.map(x => (x === old ? nu : x)); LS.set('projects', S.projects);
   if (S.project === old) { S.project = nu; LS.set('project', nu); }
   if (S.ovProject === old) S.ovProject = nu;
-  refreshCamBar(); if (S.screen === 'Overview') loadOverview();
+  if (S.ntProject === old) S.ntProject = nu;
+  refreshCamBar(); if (S.screen === 'Overview') loadOverview(); if (S.screen === 'Notes') loadNotes();
   toast(`Project heet nu "${nu}"`);
   return true;
 }
-function pickProject() {
+function pickProject(anchor = $('#btnProject')) {
   return new Promise(res => {
     let done = false;
     const finish = v => { if (done) return; done = true; res(v); };
@@ -332,7 +377,7 @@ function pickProject() {
         el('button', { class: 'row-main', onclick: () => choose(p) }, p, p === S.project ? ico('check') : null),
         el('button', { class: 'row-x', 'aria-label': 'Naam wijzigen', onclick: async () => {
           if (!(await renameProject(p))) return;
-          closeSheet(); pickProject().then(finish); // lijst opnieuw tonen met de nieuwe naam
+          closeSheet(); pickProject(anchor).then(finish); // lijst opnieuw tonen met de nieuwe naam
         } }, ico('edit')),
         el('button', { class: 'row-x', 'aria-label': 'Uit lijst halen', onclick: () => {
           if (!confirm(`Project "${p}" uit de lijst verwijderen?\n\nDe foto's van dit project blijven bewaard.`)) return;
@@ -346,7 +391,7 @@ function pickProject() {
       el('div', { class: 'add-row' }, input, el('button', { class: 'primary', onclick: add }, 'Toevoegen')),
       rows.length ? el('div', { class: 'list' }, rows) : el('p', {}, 'Geef je eerste project een naam.'),
       rows.length ? el('p', {}, 'Potlood: naam wijzigen (ook op de foto\'s). Kruisje: enkel uit deze lijst halen; de foto\'s blijven bewaard.') : null,
-    ), () => finish(null));
+    ), () => finish(null), anchor);
     if (!S.projects.length) setTimeout(() => input.focus(), 150);
   });
 }
@@ -381,7 +426,7 @@ async function openSettings() {
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
     el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken. In een geopende foto veeg je naar links of rechts voor de volgende.'),
     el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION + ' · Gard&Co'),
-  ));
+  ), null, $('#btnSettings'));
   try {
     const persisted = await navigator.storage?.persisted?.();
     const est = await navigator.storage?.estimate?.();
@@ -410,7 +455,7 @@ async function openEditor(draft, returnTo = 'Camera') {
 }
 function updateEdInfo() {
   const d = ED.draft; if (!d) return;
-  $('#edTitle').textContent = `${d.nr ? '#' + d.nr + '  ' : ''}${d.project}  ·  ${fmtDate(d.createdAt)} ${fmtTime(d.createdAt)}`;
+  $('#edTitle').textContent = `${d.nr ? '#' + d.nr + '  ' : ''}${d.project}${d.noDate ? '' : '  ·  ' + fmtDate(d.createdAt) + ' ' + fmtTime(d.createdAt)}`;
   const loc = d.address || (d.lat != null ? fmtCoords(d.lat, d.lon) + (navigator.onLine ? ' — adres zoeken…' : '') : d.wantPos ? 'Wachten op GPS…' : 'Geen locatie');
   $('#edLoc').replaceChildren(ico('pin'), loc);
 }
@@ -635,11 +680,11 @@ function editorLocationSheet() {
     p ? bigBtn('pin', `Huidige locatie gebruiken (±${Math.round(p.acc)} m)`, () => { Object.assign(d, { lat: p.lat, lon: p.lon, acc: p.acc, address: null, wantPos: false }); closeSheet(); updateEdInfo(); lookupAddress(d); }) : el('p', {}, 'Geen actuele GPS-positie beschikbaar.'),
     d.lat != null ? bigBtn('map', 'Tonen op kaart', () => window.open(mapUrl(d), '_blank')) : null,
     d.lat != null || d.wantPos ? bigBtn('ban', 'Geen locatie op deze foto', () => { Object.assign(d, { lat: null, lon: null, acc: null, address: null, wantPos: false }); closeSheet(); updateEdInfo(); }) : null,
-  ));
+  ), null, $('#edLoc'));
 }
 async function editorProjectChange() {
   if (ED.draft.id) { toast('Project wijzigen kan enkel bij een nieuwe foto', false); return; }
-  const p = await pickProject();
+  const p = await pickProject($('#edTitle'));
   if (p && ED.draft) { ED.draft.project = p; updateEdInfo(); }
 }
 
@@ -657,7 +702,7 @@ async function saveDraft(d, bmp) {
     await putBlob(d.id + ':orig', d.origBlob);
   }
   const rec = {
-    id: d.id, project: d.project, nr: d.nr, createdAt: d.createdAt, savedAt: Date.now(),
+    id: d.id, project: d.project, nr: d.nr, createdAt: d.createdAt, noDate: !!d.noDate, savedAt: Date.now(),
     lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], shapes: d.shapes, crop: d.crop || null,
     source: d.source, origName: d.origName, origType: d.origBlob?.type || 'image/jpeg', origW: bmp.width, origH: bmp.height,
     imported: d.imported || false,
@@ -719,7 +764,8 @@ async function renderAnnotated(bmp, rec) {
   const m = document.createElement('canvas').getContext('2d');
   m.font = FONT(fs);
   const noteLines = rec.note ? wrapText(m, rec.note, W - 2 * pad) : [];
-  const L1 = sfs * 1.45, L2 = fs * 1.3, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
+  const hasLoc = !!(rec.address || rec.lat != null);
+  const L1 = hasLoc || !rec.noDate ? sfs * 1.45 : 0, L2 = fs * 1.3, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
   const barH = Math.round(pad + L1 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
 
   const c = document.createElement('canvas'); c.width = W; c.height = IH + barH;
@@ -733,18 +779,23 @@ async function renderAnnotated(bmp, rec) {
   const grey = '#a1a1aa';
   let base = y + sfs * 0.95;
   ctx.font = FONT(sfs, 400); ctx.fillStyle = grey;
-  const dt = `${fmtDate(rec.createdAt)}  ${fmtTime(rec.createdAt)}`, dtW = ctx.measureText(dt).width;
+  const dt = rec.noDate ? '' : `${fmtDate(rec.createdAt)}  ${fmtTime(rec.createdAt)}`, dtW = ctx.measureText(dt).width;
   ctx.fillText(dt, W - pad - dtW, base);
-  const ps = sfs * 1.05 / 24;
-  ctx.save(); ctx.translate(pad - 4 * ps, base - sfs * 0.9 - 2 * ps); ctx.scale(ps, ps);
-  ctx.strokeStyle = grey; ctx.lineWidth = 2.2; ctx.stroke(PIN); ctx.restore();
-  const ax = pad + sfs * 1.05;
-  ctx.fillText(ellipsize(ctx, locText(rec), W - pad - dtW - fs * 0.8 - ax), ax, base);
+  if (hasLoc) { // geen locatie: speld en adres weglaten
+    const ps = sfs * 1.05 / 24;
+    ctx.save(); ctx.translate(pad - 4 * ps, base - sfs * 0.9 - 2 * ps); ctx.scale(ps, ps);
+    ctx.strokeStyle = grey; ctx.lineWidth = 2.2; ctx.stroke(PIN); ctx.restore();
+    const ax = pad + sfs * 1.05;
+    ctx.fillText(ellipsize(ctx, locText(rec), W - pad - dtW - fs * 0.8 - ax), ax, base);
+  }
   y += L1;
-  // regel 2: #nr  project
+  // regel 2: #nr (wit)  project (geel, het enige gele element)
   base = y + fs * 0.98;
   ctx.font = FONT(fs, 700); ctx.fillStyle = '#ffffff';
-  ctx.fillText(ellipsize(ctx, `#${rec.nr}  ${rec.project}`, W - 2 * pad), pad, base);
+  const nrT = `#${rec.nr}  `, nrW = ctx.measureText(nrT).width;
+  ctx.fillText(nrT, pad, base);
+  ctx.fillStyle = PROJECT_YELLOW;
+  ctx.fillText(ellipsize(ctx, rec.project, W - 2 * pad - nrW), pad + nrW, base);
   y += L2;
   ctx.textBaseline = 'top';
   // status
@@ -785,7 +836,7 @@ async function renderAnnotated(bmp, rec) {
 const META_TAG = 'WERFNOTITIES:';
 async function withMeta(blob, p) {
   const meta = {
-    app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt,
+    app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt, noDate: !!p.noDate,
     lat: p.lat, lon: p.lon, acc: p.acc, address: p.address, note: p.note, tags: p.tags, source: p.source,
     imgH: p.imgH || Math.round(p.origH * p.annW / p.origW),
   };
@@ -837,7 +888,7 @@ async function importAnnotated(files) {
       const tw = 360, tc = document.createElement('canvas'); tc.width = tw; tc.height = Math.round(ih * tw / W);
       tc.getContext('2d').drawImage(c, 0, 0, tc.width, tc.height);
       const rec = {
-        id: meta.id, project: meta.project || 'Geïmporteerd', nr: meta.nr || 0, createdAt: meta.createdAt || f.lastModified,
+        id: meta.id, project: meta.project || 'Geïmporteerd', nr: meta.nr || 0, createdAt: meta.createdAt || f.lastModified, noDate: !!meta.noDate,
         savedAt: Date.now(), lat: meta.lat ?? null, lon: meta.lon ?? null, acc: meta.acc ?? null, address: meta.address || null,
         note: meta.note || '', tags: meta.tags || [], shapes: [], source: meta.source || '', origName: f.name, origType: 'image/jpeg',
         origW: W, origH: ih, annW: W, annH: H, imgH: ih, imported: true, thumb: await toBlob(tc, 0.7),
@@ -866,10 +917,10 @@ async function openOverview() {
   await loadOverview();
 }
 async function loadOverview() {
-  const all = await getAllPhotos();
+  const all = await getAllPhotos(), noteProjs = new Set((await getAllNotes()).map(n => n.project));
   const counts = {};
   all.forEach(p => { counts[p.project] = (counts[p.project] || 0) + 1; });
-  const projects = [...new Set([...S.projects, ...Object.keys(counts)])].filter(p => counts[p] || p === S.project);
+  const projects = [...new Set([...S.projects, ...Object.keys(counts), ...noteProjs])].filter(p => counts[p] || noteProjs.has(p) || p === S.project);
   const sel = $('#ovProject'); sel.replaceChildren();
   sel.append(el('option', { value: '__all__' }, `Alle projecten (${all.length})`));
   projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
@@ -884,22 +935,23 @@ async function loadOverview() {
 /* ---- status-filter + volgorde (bepaalt ook de volgorde van PDF, Excel, ZIP en delen) ---- */
 const statusOf = p => p.tags?.[0] || '';
 const statusRank = p => { const t = statusOf(p); if (!t) return 999; const i = S.tags.indexOf(t); return i < 0 ? 900 : i; };
-const byNr = (a, b) => a.project.localeCompare(b.project) || a.nr - b.nr;
-const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b) : b.createdAt - a.createdAt);
-function renderFilter(inProj) {
+const isNote = p => (p.kind === 'note' ? 1 : 0);
+const byNr = (a, b) => a.project.localeCompare(b.project) || isNote(a) - isNote(b) || a.nr - b.nr;
+const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b) : tsOf(b) - tsOf(a));
+function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = loadOverview) {
   const cnt = {}; inProj.forEach(p => { const s = statusOf(p); cnt[s] = (cnt[s] || 0) + 1; });
   const extra = Object.keys(cnt).filter(s => s && !S.tags.includes(s));
   const chip = (key, label, color) => {
-    const on = key === null ? !S.ovStatus.size : S.ovStatus.has(key);
+    const on = key === null ? !set.size : set.has(key);
     const n = key === null ? inProj.length : cnt[key] || 0;
     return el('button', { class: 'fchip' + (on ? ' on' : '') + (n ? '' : ' zero'), style: color ? `--c:${color}` : null, onclick: () => {
-      if (key === null) S.ovStatus.clear();
-      else if (S.ovStatus.has(key)) S.ovStatus.delete(key); else S.ovStatus.add(key);
-      loadOverview();
+      if (key === null) set.clear();
+      else if (set.has(key)) set.delete(key); else set.add(key);
+      reload();
     } }, color ? el('i') : null, label, el('b', {}, String(n)));
   };
-  $('#ovFilter').replaceChildren(
-    el('button', { class: 'fsort', onclick: () => { S.ovSort = S.ovSort === 'status' ? 'date' : 'status'; LS.set('ovSort', S.ovSort); loadOverview(); } },
+  $(box).replaceChildren(
+    el('button', { class: 'fsort', onclick: () => { S.ovSort = S.ovSort === 'status' ? 'date' : 'status'; LS.set('ovSort', S.ovSort); reload(); } },
       ico('sort'), S.ovSort === 'status' ? 'Status' : 'Nieuwste'),
     chip(null, 'Alle'),
     ...[...S.tags, ...extra].map(t => chip(t, t, tagColor(t))),
@@ -907,6 +959,115 @@ function renderFilter(inProj) {
   );
 }
 const filterNote = () => (S.ovStatus.size ? 'filter: ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : '');
+
+/* ---------------- notitielijst: losse notities zonder foto ---------------- */
+const NT = { status: '' };
+async function nextNoteNr(project) {
+  return (await getAllNotes()).filter(n => n.project === project).reduce((m, n) => Math.max(m, n.nr || 0), 0) + 1;
+}
+const ntTargetProject = () => (S.ntProject && S.ntProject !== '__all__' ? S.ntProject : S.project);
+async function openNotes() {
+  S.ntProject = S.project || '__all__'; S.ntStatus.clear(); NT.status = '';
+  $('#ntText').value = '';
+  show('Notes');
+  await loadNotes();
+}
+async function loadNotes() {
+  const all = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
+  const counts = {};
+  all.forEach(n => { counts[n.project] = (counts[n.project] || 0) + 1; });
+  const projects = [...new Set([...S.projects, ...Object.keys(counts)])];
+  const sel = $('#ntProject'); sel.replaceChildren();
+  sel.append(el('option', { value: '__all__' }, `Alle projecten (${all.length})`));
+  projects.forEach(p => sel.append(el('option', { value: p }, `${p} (${counts[p] || 0})`)));
+  if (S.ntProject !== '__all__' && !projects.includes(S.ntProject)) S.ntProject = '__all__';
+  sel.value = S.ntProject;
+  const inProj = all.filter(n => S.ntProject === '__all__' || n.project === S.ntProject);
+  renderFilter(inProj, '#ntFilter', S.ntStatus, loadNotes);
+  const list = inProj.filter(n => !S.ntStatus.size || S.ntStatus.has(statusOf(n))).sort(listOrder);
+  const box = $('#ntList'); box.replaceChildren();
+  for (const n of list) {
+    const st = statusOf(n);
+    const row = el('div', { class: 'nt-row' });
+    const stBtn = el('button', { class: 'nt-st' + (st ? '' : ' none'), style: st ? `--c:${tagColor(st)}` : null,
+      onclick: () => noteStatusMenu(stBtn, n) }, el('i'), st || 'Status');
+    const projBtn = el('button', { class: 'nt-proj', onclick: e => { e.stopPropagation(); noteProjectMenu(projBtn, n); } }, n.project);
+    row.append(stBtn, el('div', { class: 'nt-main', onclick: () => editNote(row, n) },
+      el('div', { class: 'nt-text' }, n.text),
+      el('div', { class: 'nt-sub' }, projBtn, `  ·  N${n.nr}  ·  ${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`)));
+    box.append(row);
+  }
+  $('#ntEmpty').classList.toggle('hidden', list.length > 0);
+  renderNoteTags();
+  const tp = ntTargetProject();
+  $('#ntText').placeholder = tp ? `Nieuwe notitie voor ${tp}` : 'Nieuwe notitie (kies eerst een project)';
+  refreshCamBar();
+}
+function renderNoteTags() {
+  const box = $('#ntTags'); box.replaceChildren();
+  for (const t of S.tags) {
+    const b = el('button', { class: 'tag' + (NT.status === t ? ' on' : ''), style: `--c:${tagColor(t)}` }, t);
+    b.addEventListener('pointerdown', e => e.preventDefault()); // toetsenbord open houden
+    b.onclick = () => { NT.status = NT.status === t ? '' : t; renderNoteTags(); };
+    box.append(b);
+  }
+}
+async function addNote() {
+  const text = $('#ntText').value.trim();
+  if (!text) { $('#ntText').focus(); return; }
+  let project = ntTargetProject();
+  if (!project) { project = await pickProject($('#ntProject')); if (!project) return; }
+  const n = { id: newId(), kind: 'note', project, nr: await nextNoteNr(project), text, tags: NT.status ? [NT.status] : [], createdAt: Date.now() };
+  await putNote(n);
+  addProject(project);
+  $('#ntText').value = ''; NT.status = '';
+  toast(`Notitie N${n.nr} toegevoegd`);
+  await loadNotes();
+}
+function noteStatusMenu(anchor, n) {
+  const pick = async t => { const cur = { ...n, tags: t ? [t] : [], updatedAt: Date.now() }; await putNote(cur); closeSheet(); loadNotes(); };
+  openSheet(el('div', { class: 'menu' },
+    ...S.tags.map(t => el('button', { class: 'menu-item', style: `--c:${tagColor(t)}`, onclick: () => pick(t) }, el('i'), t, statusOf(n) === t ? ico('check') : null)),
+    el('button', { class: 'menu-item', style: '--c:#71717a', onclick: () => pick('') }, el('i'), 'Geen status', statusOf(n) ? null : ico('check')),
+  ), null, anchor);
+}
+function noteProjectMenu(anchor, n) {
+  const pick = async p => {
+    closeSheet();
+    if (p === n.project) return;
+    await putNote({ ...n, project: p, nr: await nextNoteNr(p), updatedAt: Date.now() });
+    loadNotes();
+  };
+  openSheet(el('div', { class: 'menu' },
+    el('h4', {}, 'Project'),
+    ...S.projects.map(p => el('button', { class: 'menu-item plain', onclick: () => pick(p) }, p, p === n.project ? ico('check') : null)),
+  ), null, anchor);
+}
+function editNote(anchor, n) {
+  const ta = el('textarea', { class: 'nt-edit', rows: 4 }); ta.value = n.text;
+  openSheet(el('div', {},
+    el('h4', { style: 'margin-top:0' }, `Notitie N${n.nr} · ${n.project}`),
+    ta,
+    el('div', { class: 'add-row', style: 'margin-top:10px' },
+      el('button', { class: 'big danger', style: 'margin:0;flex:1', onclick: async () => {
+        if (!confirm(`Notitie N${n.nr} verwijderen?`)) return;
+        await deleteNote(n.id); closeSheet(); toast('Verwijderd'); loadNotes();
+      } }, ico('trash'), 'Wis'),
+      el('button', { class: 'primary', style: 'flex:1', onclick: async () => {
+        const t = ta.value.trim(); if (!t) return;
+        await putNote({ ...n, text: t, updatedAt: Date.now() }); closeSheet(); loadNotes();
+      } }, 'Opslaan')),
+  ), null, anchor);
+  setTimeout(() => ta.focus(), 100);
+}
+/* Notities die meegaan in de exports: zelfde project en statusfilter als het overzicht.
+   Met een eigen selectie van foto's gaan er geen notities mee. */
+async function exportNotes() {
+  if (S.selecting && S.selected.size) return [];
+  return (await getAllNotes()).map(n => ({ ...n, kind: 'note' }))
+    .filter(n => (S.ovProject === '__all__' || n.project === S.ovProject) && (!S.ovStatus.size || S.ovStatus.has(statusOf(n))));
+}
+const mergeItems = (photos, notes = []) => [...photos, ...notes].sort(S.ovSort === 'status' ? (a, b) => statusRank(a) - statusRank(b) || byNr(a, b) : byNr);
 function renderGrid() {
   gridUrls.forEach(u => URL.revokeObjectURL(u)); gridUrls = [];
   const g = $('#ovGrid'); g.replaceChildren();
@@ -917,7 +1078,7 @@ function renderGrid() {
       el('img', { src: u, alt: '', loading: 'lazy' }),
       el('span', { class: 'nr' }, (S.ovProject === '__all__' ? p.project.slice(0, 12) + '  ' : '') + '#' + p.nr),
       p.tags.length ? el('span', { class: 'dots' }, p.tags.map(t => el('i', { style: `background:${tagColor(t)}` }))) : null,
-      el('span', { class: 'cap' }, p.note || `${fmtDate(p.createdAt)} ${fmtTime(p.createdAt)}`),
+      el('span', { class: 'cap' }, p.note || `${dateOf(p)} ${timeOf(p)}`),
       el('span', { class: 'chk' }, ico('check')));
     onTapOrHold(cell, () => {
       if (S.selecting) toggleSel(p.id); else openViewer(p.id);
@@ -975,19 +1136,22 @@ function overviewMenu() {
     proj ? bigBtn('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); })
       : el('p', {}, 'Kies bovenaan één project om het af te sluiten.'),
     el('p', {}, 'Importeren: kies foto\'s met notitie die je eerder uit deze app bewaard of gedeeld hebt. Project, nummer, tags, notitie, datum en adres worden teruggelezen, zodat je opnieuw een Excel of PDF kunt maken.'),
-  ));
+  ), null, $('#ovMenu'));
 }
 async function closeProject(proj) {
   const list = (await getAllPhotos()).filter(p => p.project === proj).sort((a, b) => a.nr - b.nr);
-  if (!list.length) return;
+  const notes = (await getAllNotes()).filter(n => n.project === proj).map(n => ({ ...n, kind: 'note' }));
+  if (!list.length && !notes.length) return;
+  const what = [list.length ? plural(list.length, 'foto', 'foto\'s') : '', notes.length ? plural(notes.length, 'notitie', 'notities') : ''].filter(Boolean).join(' en ');
   busy('ZIP maken…');
   let zip;
-  try { zip = await buildZip(list); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
+  try { zip = await buildZip(list, '', notes); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
   busy();
-  const delBtn = bigBtn('trash', `${plural(list.length, 'foto', 'foto\'s')} uit de app wissen`, async () => {
-    if (!confirm(`Alle ${plural(list.length, 'foto', 'foto\'s')} van "${proj}" uit de app wissen?\n\nDe ZIP en de kopieën in Downloads blijven bestaan.`)) return;
+  const delBtn = bigBtn('trash', 'Alles uit de app wissen', async () => {
+    if (!confirm(`Alle ${what} van "${proj}" uit de app wissen?\n\nDe ZIP en de kopieën in Downloads blijven bestaan.`)) return;
     closeSheet(); busy('Wissen…');
     for (const p of list) await deletePhoto(p.id);
+    for (const n of notes) await deleteNote(n.id);
     busy();
     S.projects = S.projects.filter(x => x !== proj); LS.set('projects', S.projects);
     if (S.project === proj) { S.project = ''; LS.set('project', ''); }
@@ -998,7 +1162,7 @@ async function closeProject(proj) {
   const saved = () => { delBtn.disabled = false; };
   openSheet(el('div', {},
     el('h3', {}, `Project "${proj}" afsluiten`),
-    el('p', {}, `${plural(list.length, 'foto', 'foto\'s')} · ZIP met originelen, foto's met notitie, Excel en PDF · ${(zip.size / 1048576).toFixed(1)} MB`),
+    el('p', {}, `${what} · ZIP met originelen, foto's met notitie, Excel en PDF · ${(zip.size / 1048576).toFixed(1)} MB`),
     el('h4', {}, 'Stap 1 · Bewaar de ZIP'),
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { download(zip); saved(); }),
     el('p', {}, SHARE_HINT),
@@ -1035,7 +1199,7 @@ function savedSheet(files, title) {
     bigBtn('check', 'OK', () => closeSheet()),
   ));
 }
-function shareSheet(files, title, intro) {
+function shareSheet(files, title, intro, text) {
   if (!files.every(shareableType)) { savedSheet(files, title); return; }
   const groups = [];
   for (let i = 0; i < files.length; i += SHARE_MAX) groups.push(files.slice(i, i + SHARE_MAX));
@@ -1046,7 +1210,7 @@ function shareSheet(files, title, intro) {
       : `Deel ${i + 1} van ${groups.length}: foto ${i * SHARE_MAX + 1}–${i * SHARE_MAX + g.length}`;
     const b = bigBtn('share', label, async () => {
       try {
-        await navigator.share({ files: g, title });
+        await navigator.share(shareData(g, title, text));
         b.classList.add('done'); b.firstChild.replaceWith(ico('check'));
         if (groups.length === 1) closeSheet();
       } catch (e) {
@@ -1064,37 +1228,42 @@ function shareSheet(files, title, intro) {
     bigBtn('download', 'Opslaan op gsm (Downloads)', () => { closeSheet(); downloadMany(files); }),
   ));
 }
-const deliverSheet = (files, title) => shareSheet(files, title, files.length === 1 ? files[0].name : null);
-async function shareFiles(files, title) {
+const deliverSheet = (files, title, text) => shareSheet(files, title, files.length === 1 ? files[0].name : null, text);
+// title wordt in Gmail/Outlook het onderwerp, text de inhoud van de mail
+const shareData = (files, title, text) => (text ? { files, title, text } : { files, title });
+async function shareFiles(files, title, text) {
   // Rechtstreeks het deelmenu openen als het kan; anders (te veel bestanden, tik verlopen) via het keuzemenu.
   if (files.length <= SHARE_MAX && canShareFiles(files)) {
-    try { await navigator.share({ files, title }); return; }
+    try { await navigator.share(shareData(files, title, text)); return; }
     catch (e) { if (e.name === 'AbortError') return; } // tik verlopen: deelknop tonen (nieuwe tik)
   }
-  shareSheet(files, title);
+  shareSheet(files, title, null, text);
 }
 
 async function ovAction(act) {
   const list = targets();
-  if (!list.length) { toast('Geen foto\'s', false); return; }
+  const notes = ['excel', 'pdf', 'word', 'zip'].includes(act) ? await exportNotes() : [];
+  if (!list.length && !notes.length) { toast('Geen foto\'s', false); return; }
   try {
     if (act === 'share') {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
-      await shareFiles(files, exportName(list));
+      const rt = reportTitle(list, filterNote());
+      await shareFiles(files, rt.title, rt.sub + '\n\nGard&Co Werfnotities');
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
       await downloadMany(files);
     } else if (act === 'excel') {
-      busy('Excel maken…'); const f = await buildExcel(list, filterNote()); busy();
+      busy('Excel maken…'); const f = await buildExcel(list, filterNote(), notes); busy();
       deliverSheet([f], 'Excel-export');
     } else if (act === 'pdf') {
-      busy('PDF maken…'); const f = await buildPdf(list, filterNote()); busy();
-      deliverSheet([f], 'PDF-verslag');
+      busy('PDF maken…'); const f = await buildPdf(list, filterNote(), notes); busy();
+      const rt = reportTitle(mergeItems(list, notes), filterNote());
+      deliverSheet([f], rt.title, 'Verslag in bijlage (PDF).\n' + rt.sub + '\n\nGard&Co Werfnotities');
     } else if (act === 'word') {
-      busy('Word maken…'); const f = await buildWord(list, filterNote()); busy();
+      busy('Word maken…'); const f = await buildWord(list, filterNote(), notes); busy();
       deliverSheet([f], 'Word-verslag');
     } else if (act === 'zip') {
-      busy('ZIP maken…'); const f = await buildZip(list, filterNote()); busy();
+      busy('ZIP maken…'); const f = await buildZip(list, filterNote(), notes); busy();
       deliverSheet([f], 'ZIP met alles');
     } else if (act === 'delete') {
       if (!S.selected.size) return;
@@ -1105,36 +1274,41 @@ async function ovAction(act) {
   } catch (e) { busy(); alert('Mislukt: ' + e.message); }
 }
 
-/* ---------------- exports ---------------- */
-function reportTitle(list, note = '') {
-  const projs = [...new Set(list.map(p => p.project))];
-  const times = list.map(p => p.createdAt);
-  const from = fmtDate(Math.min(...times)), to = fmtDate(Math.max(...times));
+/* ---------------- exports ----------------
+   list = foto's (in volgorde), notes = losse notities; de tabel bevat beide, de foto-pagina's enkel foto's. */
+function reportTitle(items, note = '') {
+  const projs = [...new Set(items.map(p => p.project))];
+  const times = items.filter(p => !p.noDate).map(tsOf);
+  const from = times.length ? fmtDate(Math.min(...times)) : '', to = times.length ? fmtDate(Math.max(...times)) : '';
+  const nP = items.filter(p => p.kind !== 'note').length, nN = items.length - nP;
+  const counts = [nP ? plural(nP, 'foto', 'foto\'s') : '', nN ? plural(nN, 'notitie', 'notities') : ''].filter(Boolean).join(' + ');
   return {
     title: 'Verslag – ' + (projs.length === 1 ? projs[0] : projs.join(', ')),
-    sub: `${plural(list.length, 'foto', 'foto\'s')} · ${from === to ? from : from + ' – ' + to} · opgemaakt ${fmtDate(Date.now())}${note ? ' · ' + note : ''}`,
+    sub: [counts, from === to ? from : from + ' – ' + to, 'opgemaakt ' + fmtDate(Date.now()), note].filter(Boolean).join(' · '),
   };
 }
-async function buildExcel(list, note = '') {
+const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
+async function buildExcel(list, note = '', notes = []) {
+  const items = mergeItems(list, notes);
   const headers = ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
-  const { title, sub } = reportTitle(list, note);
-  const rows = list.map(p => [
-    p.nr, p.project, p.tags.join(', '), p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
-    p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
-    fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '',
-  ]);
+  const { title, sub } = reportTitle(items, note);
+  const rows = items.map(p => p.kind === 'note'
+    ? [nrOf(p), p.project, p.tags.join(', '), itemText(p), fmtDate(tsOf(p)), fmtTime(tsOf(p)), '', '', '', 'notitie']
+    : [p.nr, p.project, p.tags.join(', '), itemText(p), dateOf(p), timeOf(p),
+      p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
+      fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '']);
   const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub]);
-  return new File([blob], exportName(list) + '.xlsx', { type: blob.type });
+  return new File([blob], exportName(items) + '.xlsx', { type: blob.type });
 }
-/* Oplijsting vooraan in PDF en Word: zoals Excel, tot en met Uur. */
-function reportTable(list) {
+/* Oplijsting vooraan in PDF en Word: zoals Excel, tot en met Uur (foto's + losse notities). */
+function reportTable(items) {
   return {
     headers: ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur'],
     widths: [5, 17, 10, 52, 10, 6],
-    rows: list.map(p => [
-      String(p.nr), p.project,
+    rows: items.map(p => [
+      nrOf(p), p.project,
       p.tags.length ? { t: p.tags.join(', '), c: tagColor(p.tags[0]) } : '',
-      p.note || '', fmtDate(p.createdAt), fmtTime(p.createdAt),
+      itemText(p), p.kind === 'note' ? fmtDate(tsOf(p)) : dateOf(p), p.kind === 'note' ? fmtTime(tsOf(p)) : timeOf(p),
     ]),
   };
 }
@@ -1143,30 +1317,31 @@ async function reportImages(list) {
   for (const p of list) imgs.push({ blob: await getBlob(p.id + ':ann'), w: p.annW, h: p.annH });
   return imgs;
 }
-async function buildPdf(list, note = '') {
-  const { title, sub } = reportTitle(list, note);
-  const blob = await makePdf(title, sub, await reportImages(list), reportTable(list));
-  return new File([blob], exportName(list) + '.pdf', { type: 'application/pdf' });
+async function buildPdf(list, note = '', notes = []) {
+  const items = mergeItems(list, notes);
+  const { title, sub } = reportTitle(items, note);
+  const blob = await makePdf(title, sub, await reportImages(list), reportTable(items));
+  return new File([blob], exportName(items) + '.pdf', { type: 'application/pdf' });
 }
-async function buildWord(list, note = '') {
-  const { title, sub } = reportTitle(list, note);
-  const blob = await makeDocx(title, sub, await reportImages(list), reportTable(list));
-  return new File([blob], exportName(list) + '.docx', { type: blob.type });
+async function buildWord(list, note = '', notes = []) {
+  const items = mergeItems(list, notes);
+  const { title, sub } = reportTitle(items, note);
+  const blob = await makeDocx(title, sub, await reportImages(list), reportTable(items));
+  return new File([blob], exportName(items) + '.docx', { type: blob.type });
 }
-async function buildZip(list, note = '') {
-  const base = exportName(list);
+async function buildZip(list, note = '', notes = []) {
+  const base = exportName([...list, ...notes]);
   const files = [];
   for (const p of list) {
     files.push({ name: `${base}/met_notitie/${fileBase(p)}.jpg`, data: await withMeta(await getBlob(p.id + ':ann'), p) });
     const ob = await getBlob(p.id + ':orig');
     files.push({ name: `${base}/origineel/${fileBase(p)}_origineel.${extOf(ob)}`, data: ob });
   }
-  files.push({ name: `${base}/${base}.xlsx`, data: await buildExcel(list, note) });
-  files.push({ name: `${base}/${base}.pdf`, data: await buildPdf(list, note) });
+  files.push({ name: `${base}/${base}.xlsx`, data: await buildExcel(list, note, notes) });
+  files.push({ name: `${base}/${base}.pdf`, data: await buildPdf(list, note, notes) });
   const blob = await makeZip(files);
   return new File([blob], base + '.zip', { type: 'application/zip' });
 }
-
 /* ---------------- detail ---------------- */
 let vwUrl;
 async function openViewer(id, dir = 0) {
@@ -1300,7 +1475,7 @@ async function vwAction(act) {
       const ob = await getBlob(p.id + ':orig');
       openEditor({ ...p, tags: [...p.tags], shapes: p.shapes.map(s => ({ ...s, pts: s.pts.map(q => [...q]) })), origBlob: ob, wantPos: false }, 'Viewer');
     } else if (act === 'share') {
-      await shareFiles(await annFiles([p]), fileBase(p));
+      await shareFiles(await annFiles([p]), `#${p.nr} ${p.project}`, [p.note, dateOf(p) + ' ' + timeOf(p), p.address].filter(s => s && s.trim()).join('\n'));
     } else if (act === 'save') {
       download((await annFiles([p]))[0]); toast('Opgeslagen in Downloads');
     } else if (act === 'orig') {
@@ -1324,6 +1499,11 @@ function wire() {
   $('#btnSettings').onclick = openSettings;
   $('#btnGallery').onclick = () => $('#fileGallery').click();
   $('#btnOverview').onclick = openOverview;
+  $('#btnNotes').onclick = openNotes;
+  $('#ntBack').onclick = () => show('Camera');
+  $('#ntProject').onchange = e => { S.ntProject = e.target.value; S.ntStatus.clear(); syncProject(e.target.value); loadNotes(); };
+  $('#ntAdd').addEventListener('pointerdown', e => e.preventDefault());
+  $('#ntAdd').onclick = addNote;
   $('#btnShutter').onclick = capture;
   $('#fileGallery').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'galerij'); };
   $('#fileCamera').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'camera'); };
@@ -1351,7 +1531,7 @@ function wire() {
   $('#ovBack').onclick = () => show('Camera');
   $('#ovSelect').onclick = () => setSelecting(!S.selecting);
   $('#ovMenu').onclick = overviewMenu;
-  $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); loadOverview(); };
+  $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); syncProject(e.target.value); loadOverview(); };
   $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
   $('#vwBack').onclick = () => { show('Overview'); loadOverview(); };
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });

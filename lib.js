@@ -372,11 +372,11 @@ function parseTiff(v, t) {
   };
   const out = {};
   const ifd0 = readIfd(u32(t + 4));
-  if (ifd0[0x8769]) {
-    const ex = readIfd(u32(ifd0[0x8769].valOff));
-    const d = str(ex[0x9003]) || str(ifd0[0x0132]);
-    const m = d && d.match(/(\d+):(\d+):(\d+) (\d+):(\d+):(\d+)/);
-    if (m) out.date = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+  {
+    const ex = ifd0[0x8769] ? readIfd(u32(ifd0[0x8769].valOff)) : {};
+    const d = str(ex[0x9003]) || str(ex[0x9004]) || str(ifd0[0x0132]);
+    const m = d && d.match(/(\d{4}):(\d+):(\d+) (\d+):(\d+):(\d+)/);
+    if (m && +m[1] > 1990) out.date = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
   }
   if (ifd0[0x8825]) {
     const g = readIfd(u32(ifd0[0x8825].valOff));
