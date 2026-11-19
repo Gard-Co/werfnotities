@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.0';
+const APP_VERSION = '4.1';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1425,13 +1425,22 @@ function exportMenu() {
     item('doc', 'PDF', act('pdf')),
     item('word', 'Word', act('word')),
     item('archive', 'ZIP (alles)', act('zip')),
-    el('h4', { style: 'margin-top:12px' }, 'Meer'),
-    n ? item('trash', `Selectie wissen (${n})`, act('delete'), 'danger') : null,
-    item('checkAll', 'Alles selecteren', () => { closeSheet(); selectAll(); }),
-    item('upload', 'Foto\'s met notitie importeren', () => { closeSheet(); $('#fileImport').click(); }),
-    proj && !isGeneral(proj) ? item('edit', 'Projectnaam wijzigen', () => { closeSheet(); renameProject(proj); }) : null,
-    proj ? item('lock', `Project "${proj}" afsluiten`, () => { closeSheet(); closeProject(proj); }) : null,
   ), null, $('#ntExport'));
+}
+/* ⋮-menu: selecteren, importeren, project */
+function moreMenu() {
+  const proj = S.ovProject !== '__all__' ? S.ovProject : null;
+  const n = S.selecting && S.selected.size ? S.selected.size : 0;
+  const item = (icon, label, fn, cls = '') => el('button', { class: 'menu-item plain ' + cls, onclick: () => { closeSheet(); fn(); } }, ico(icon), label);
+  openSheet(el('div', { class: 'menu' },
+    el('h4', {}, 'Meer'),
+    item('checkAll', 'Alles selecteren', selectAll),
+    n ? item('trash', `Selectie wissen (${n})`, () => ovAction('delete'), 'danger') : null,
+    item('upload', 'Foto\'s met notitie importeren', () => $('#fileImport').click()),
+    proj && !isGeneral(proj) ? item('edit', 'Projectnaam wijzigen', () => renameProject(proj)) : null,
+    proj ? item('lock', `Project "${proj}" afsluiten`, () => closeProject(proj)) : null,
+    proj ? null : el('p', {}, 'Kies bovenaan één project om het te hernoemen of af te sluiten.'),
+  ), null, $('#ntMore'));
 }
 async function closeProject(proj) {
   const list = (await getAllPhotos()).filter(p => p.project === proj).sort((a, b) => a.nr - b.nr);
@@ -1919,6 +1928,7 @@ function wire() {
 
   $('#ntSelect').onclick = () => setSelecting(!S.selecting);
   $('#ntExport').onclick = exportMenu;
+  $('#ntMore').onclick = moreMenu;
   $('#ntView').onclick = () => { S.ntView = S.ntView === 'tiles' ? 'list' : 'tiles'; LS.set('ntView', S.ntView); renderView(); };
   $('#vwBack').onclick = viewerBack;
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });

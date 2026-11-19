@@ -376,3 +376,5 @@ img { -webkit-touch-callout:none; }
 .big-opts.three .opt { gap:8px; }
 #ntSelect.icon-only { width:40px; padding:0; display:grid; place-items:center; }
 #ntSelect.icon-only .ic { width:20px; height:20px; }
+
+#scrNotes .bar .ibtn { width:36px; }
