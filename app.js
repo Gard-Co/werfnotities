@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.9';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/>',
   word: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8.5 12 1.2 5 1.3-3.5 1.3 3.5 1.2-5"/>',
   sort: '<path d="M3 6h18M6 12h12M10 18h4"/>',
@@ -74,7 +75,8 @@ const S = {
   pos: null, gpsWatch: null,
   screen: 'Camera',
   ovProject: null, selecting: false, selected: new Set(), list: [],
-  ntProject: null, ntStatus: new Set(),
+  people: LS.get('people', []), // personen aan wie een notitie toegewezen kan worden (eigenaar)
+  ntProject: null, ntStatus: new Set(), ntOwner: new Set(), ovOwner: new Set(),
   ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'date'
   viewId: null,
 };
@@ -108,6 +110,7 @@ const putPhoto = async p => rq((await os('photos', 'readwrite')).put(p));
 const getBlob = async k => rq((await os('blobs')).get(k));
 const putBlob = async (k, b) => rq((await os('blobs', 'readwrite')).put(b, k));
 const getAllNotes = async () => rq((await os('notes')).getAll());
+const getNote = async id => rq((await os('notes')).get(id));
 const putNote = async n => rq((await os('notes', 'readwrite')).put(n));
 const deleteNote = async id => rq((await os('notes', 'readwrite')).delete(id));
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
@@ -156,12 +159,31 @@ function openSheet(content, onDismiss, anchor) {
   sh.classList.toggle('pop', !!anchor);
   body.style.cssText = '';
   sh.classList.remove('hidden');
-  if (anchor) placePop(body, anchor);
+  popAnchor = anchor || null;
+  if (anchor) fitPop();
   sheetClose = onDismiss || null;
   armBack();
 }
+/* Uitklapvenster altijd zichtbaar houden, ook als het toetsenbord opengaat (scherm wordt dan lager). */
+let popAnchor = null;
+function fitPop() {
+  const sh = $('#sheet'), body = $('#sheetBody');
+  if (!popAnchor || sh.classList.contains('hidden') || !sh.classList.contains('pop')) return;
+  body.style.top = body.style.bottom = body.style.maxHeight = '';
+  placePop(body, popAnchor);
+  const vv = window.visualViewport, vh = vv ? vv.height : innerHeight, top0 = vv ? vv.offsetTop : 0;
+  const r = body.getBoundingClientRect();
+  if (r.bottom > top0 + vh - 8 || r.top < top0 + 8) {
+    body.style.bottom = '';
+    body.style.maxHeight = Math.round(vh - 16) + 'px';
+    const h = Math.min(r.height, vh - 16);
+    body.style.top = Math.round(top0 + Math.max(8, Math.min(r.top - top0, vh - h - 8))) + 'px';
+  }
+}
+window.visualViewport?.addEventListener('resize', fitPop);
+window.addEventListener('resize', fitPop);
 function placePop(body, anchor) {
-  const r = anchor.getBoundingClientRect(), vw = innerWidth, vh = innerHeight, m = 8;
+  const r = anchor.getBoundingClientRect(), vw = innerWidth, vh = window.visualViewport?.height || innerHeight, m = 8;
   const w = Math.min(360, vw - 2 * m);
   body.style.width = w + 'px';
   const cx = r.left + r.width / 2;
@@ -174,6 +196,7 @@ function closeSheet(dismissed) {
   if ($('#sheet').classList.contains('hidden')) return;
   $('#sheet').classList.add('hidden');
   $('#sheetBody').replaceChildren();
+  popAnchor = null;
   const cb = sheetClose; sheetClose = null;
   if (dismissed && cb) cb();
 }
@@ -414,6 +437,11 @@ async function openSettings() {
     const t = tagInput.value.split(',').map(s => s.trim()).filter(Boolean);
     S.tags = t.length ? [...new Set(t)] : DEFAULT_STATUS; LS.set('tags', S.tags); toast('Statussen bewaard');
   });
+  const peopleInput = el('input', { type: 'text', value: S.people.join(', '), placeholder: 'bv. Jan, Els, Aannemer Peeters' });
+  peopleInput.addEventListener('change', () => {
+    S.people = [...new Set(peopleInput.value.split(',').map(s => s.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    LS.set('people', S.people); toast('Personen bewaard');
+  });
   const storage = el('p', {}, '…');
   openSheet(el('div', {},
     el('h3', {}, 'Instellingen'),
@@ -422,6 +450,8 @@ async function openSettings() {
     el('p', {}, 'Vraagt Chrome telkens om te bevestigen? Zet in Chrome → Instellingen → Downloads de optie "Vragen waar bestanden moeten worden opgeslagen" uit.'),
     el('h4', {}, 'Statussen'), tagInput,
     el('p', {}, 'Gescheiden door komma\'s. NOK is rood, ToDo oranje, OK groen en Testen blauw.'),
+    el('h4', {}, 'Personen (eigenaar)'), peopleInput,
+    el('p', {}, 'Gescheiden door komma\'s. Je kunt ook rechtstreeks een nieuwe persoon toevoegen in de keuzelijst Eigenaar.'),
     el('h4', {}, 'Opslag'), storage,
     el('h4', {}, 'Tips'),
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
@@ -625,6 +655,26 @@ function drawShapes(ctx, shapes, x, y, w, h) {
   ctx.restore();
 }
 function setColor(c) { ED.color = c; $('#edColor .swatch').style.setProperty('--sw', c); }
+/* ---------------- eigenaar (persoon aan wie de notitie/actie is toegewezen) ---------------- */
+function addPerson(name) { if (name && !S.people.includes(name)) { S.people = [...S.people, name].sort((a, b) => a.localeCompare(b)); LS.set('people', S.people); } }
+function ownerMenu(anchor, current, onPick) {
+  const input = el('input', { type: 'text', placeholder: 'Nieuwe persoon', enterkeyhint: 'done', autocapitalize: 'words' });
+  const pick = v => { closeSheet(); onPick(v); };
+  const add = () => { const v = input.value.trim(); if (!v) return; addPerson(v); pick(v); };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+  openSheet(el('div', { class: 'menu' },
+    el('h4', {}, 'Eigenaar'),
+    ...S.people.map(p => el('button', { class: 'menu-item plain', onclick: () => pick(p) }, ico('user'), p, p === current ? ico('check') : null)),
+    el('button', { class: 'menu-item plain muted', onclick: () => pick('') }, ico('ban'), 'Geen eigenaar', current ? null : ico('check')),
+    el('div', { class: 'add-row', style: 'margin-top:8px' }, input, el('button', { class: 'primary', onclick: add }, 'Toevoegen')),
+  ), null, anchor);
+}
+const ownerBtn = (owner, onclick) => {
+  const b = el('button', { class: 'tag owner' + (owner ? ' on' : '') }, ico('user'), owner || 'Eigenaar');
+  b.addEventListener('pointerdown', e => e.preventDefault()); // toetsenbord open houden
+  b.onclick = () => onclick(b);
+  return b;
+};
 function renderTags() {
   const box = $('#edTags'); box.replaceChildren();
   for (const t of S.tags) {
@@ -637,6 +687,7 @@ function renderTags() {
     });
     box.append(b);
   }
+  box.append(ownerBtn(ED.draft.owner, b => ownerMenu(b, ED.draft.owner, v => { ED.draft.owner = v; ED.dirty = true; renderTags(); })));
 }
 function editorCancel() {
   const d = ED.draft; if (!d) return;
@@ -704,7 +755,7 @@ async function saveDraft(d, bmp) {
   }
   const rec = {
     id: d.id, project: d.project, nr: d.nr, createdAt: d.createdAt, noDate: !!d.noDate, savedAt: Date.now(),
-    lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], shapes: d.shapes, crop: d.crop || null,
+    lat: d.lat, lon: d.lon, acc: d.acc, address: d.address, note: d.note, tags: [...d.tags], owner: d.owner || '', shapes: d.shapes, crop: d.crop || null,
     source: d.source, origName: d.origName, origType: d.origBlob?.type || 'image/jpeg', origW: bmp.width, origH: bmp.height,
     imported: d.imported || false,
   };
@@ -766,7 +817,7 @@ async function renderAnnotated(bmp, rec) {
   m.font = FONT(fs);
   const noteLines = rec.note ? wrapText(m, rec.note, W - 2 * pad) : [];
   const hasLoc = !!(rec.address || rec.lat != null);
-  const L1 = hasLoc || !rec.noDate ? sfs * 1.45 : 0, L2 = fs * 1.3, LT = rec.tags.length ? fs * 1.2 : 0, LN = fs * 1.32;
+  const L1 = hasLoc || !rec.noDate ? sfs * 1.45 : 0, L2 = fs * 1.3, LT = rec.tags.length || rec.owner ? fs * 1.2 : 0, LN = fs * 1.32;
   const barH = Math.round(pad + L1 + L2 + (LT ? gap + LT : 0) + (noteLines.length ? gap + noteLines.length * LN : 0) + pad * 0.8);
 
   const c = document.createElement('canvas'); c.width = W; c.height = IH + barH;
@@ -814,6 +865,10 @@ async function renderAnnotated(bmp, rec) {
       ctx.fillStyle = '#fff'; ctx.fillText(t, tx + tfs * 1.2, y + (th - tfs) / 2 + 1);
       tx += tw + fs * 0.3;
     }
+    if (rec.owner) { // eigenaar naast de status
+      ctx.font = FONT(Math.round(fs * 0.78), 500); ctx.fillStyle = '#d4d4d8';
+      ctx.fillText(ellipsize(ctx, '→ ' + rec.owner, W - pad - tx), tx + (rec.tags.length ? fs * 0.1 : 0), y + (fs * 1.15 - fs * 0.78) / 2);
+    }
     y += LT;
   }
   // notitie
@@ -838,7 +893,7 @@ const META_TAG = 'WERFNOTITIES:';
 async function withMeta(blob, p) {
   const meta = {
     app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt, noDate: !!p.noDate,
-    lat: p.lat, lon: p.lon, acc: p.acc, address: p.address, note: p.note, tags: p.tags, source: p.source,
+    lat: p.lat, lon: p.lon, acc: p.acc, address: p.address, note: p.note, tags: p.tags, owner: p.owner || '', source: p.source,
     imgH: p.imgH || Math.round(p.origH * p.annW / p.origW),
   };
   const txt = new TextEncoder().encode(META_TAG + JSON.stringify(meta));
@@ -891,7 +946,7 @@ async function importAnnotated(files) {
       const rec = {
         id: meta.id, project: meta.project || 'Geïmporteerd', nr: meta.nr || 0, createdAt: meta.createdAt || f.lastModified, noDate: !!meta.noDate,
         savedAt: Date.now(), lat: meta.lat ?? null, lon: meta.lon ?? null, acc: meta.acc ?? null, address: meta.address || null,
-        note: meta.note || '', tags: meta.tags || [], shapes: [], source: meta.source || '', origName: f.name, origType: 'image/jpeg',
+        note: meta.note || '', tags: meta.tags || [], owner: meta.owner || '', shapes: [], source: meta.source || '', origName: f.name, origType: 'image/jpeg',
         origW: W, origH: ih, annW: W, annH: H, imgH: ih, imported: true, thumb: await toBlob(tc, 0.7),
       };
       await putBlob(rec.id + ':orig', base);
@@ -912,7 +967,7 @@ async function importAnnotated(files) {
 /* ---------------- overzicht ---------------- */
 let gridUrls = [];
 async function openOverview() {
-  S.ovProject = S.project || '__all__'; S.ovStatus.clear(); S.viewReturn = 'Overview';
+  S.ovProject = S.project || '__all__'; S.ovStatus.clear(); S.ovOwner.clear(); S.viewReturn = 'Overview';
   setSelecting(false, true);
   show('Overview');
   await loadOverview();
@@ -929,7 +984,7 @@ async function loadOverview() {
   sel.value = S.ovProject;
   const inProj = all.filter(p => S.ovProject === '__all__' || p.project === S.ovProject);
   renderFilter(inProj);
-  S.list = inProj.filter(p => !S.ovStatus.size || S.ovStatus.has(statusOf(p))).sort(listOrder);
+  S.list = inProj.filter(p => (!S.ovStatus.size || S.ovStatus.has(statusOf(p))) && ownerOk(S.ovOwner, p)).sort(listOrder);
   for (const id of [...S.selected]) if (!S.list.some(p => p.id === id)) S.selected.delete(id);
   renderGrid();
 }
@@ -939,7 +994,30 @@ const statusRank = p => { const t = statusOf(p); if (!t) return 999; const i = S
 const isNote = p => (p.kind === 'note' ? 1 : 0);
 const byNr = (a, b) => a.project.localeCompare(b.project) || isNote(a) - isNote(b) || a.nr - b.nr;
 const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b) : tsOf(b) - tsOf(a));
-function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = loadOverview) {
+const ownerOf = p => p.owner || '';
+const ownerOk = (set, p) => !set.size || set.has(ownerOf(p));
+/* filter op eigenaar: meerdere personen aan te vinken */
+function ownerFilterMenu(anchor, items, set, reload) {
+  const cnt = {}; items.forEach(p => { const o = ownerOf(p); cnt[o] = (cnt[o] || 0) + 1; });
+  const names = [...new Set([...S.people, ...Object.keys(cnt).filter(Boolean)])];
+  const render = () => {
+    const row = (key, label) => el('button', { class: 'menu-item plain' + (key === '' ? ' muted' : ''), onclick: () => {
+      if (key === null) set.clear(); else if (set.has(key)) set.delete(key); else set.add(key);
+      reload(); render();
+    } }, key === null ? ico('checkAll') : key === '' ? ico('ban') : ico('user'), label, el('b', { class: 'menu-n' }, String(key === null ? items.length : cnt[key] || 0)),
+      (key === null ? !set.size : set.has(key)) ? ico('check') : null);
+    $('#sheetBody').replaceChildren(el('div', { class: 'menu' },
+      el('h4', {}, 'Filter op eigenaar'),
+      row(null, 'Alle eigenaars'),
+      ...names.map(n => row(n, n)),
+      row('', 'Geen eigenaar'),
+      el('button', { class: 'primary', style: 'margin-top:8px', onclick: () => closeSheet() }, 'Klaar')));
+  };
+  openSheet(el('div'), null, anchor);
+  render(); fitPop();
+  popAnchor = null; // de filterknop wordt hertekend; venster blijft op zijn plaats
+}
+function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = loadOverview, ownerSet = S.ovOwner) {
   const cnt = {}; inProj.forEach(p => { const s = statusOf(p); cnt[s] = (cnt[s] || 0) + 1; });
   const extra = Object.keys(cnt).filter(s => s && !S.tags.includes(s));
   const chip = (key, label, color) => {
@@ -957,6 +1035,12 @@ function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = load
     chip(null, 'Alle'),
     ...[...S.tags, ...extra].map(t => chip(t, t, tagColor(t))),
     cnt[''] ? chip('', 'Geen status', '#71717a') : null,
+    (() => { // eigenaar-filter
+      const label = ownerSet.size ? [...ownerSet].map(o => o || 'geen').join(', ') : 'Eigenaar';
+      const b = el('button', { class: 'fchip fowner' + (ownerSet.size ? ' on' : '') }, ico('user'), label, ico('chevronDown'));
+      b.onclick = () => ownerFilterMenu(b, inProj, ownerSet, reload);
+      return b;
+    })(),
   ].filter(Boolean));
 }
 /* Welke filters zijn gebruikt (staat in elke export en mail). */
@@ -964,19 +1048,20 @@ function filterDesc() {
   const parts = [];
   if (S.ovProject === '__all__') parts.push('alle projecten');
   parts.push(S.ovStatus.size ? 'status ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : 'alle statussen');
+  parts.push(S.ovOwner.size ? 'eigenaar ' + [...S.ovOwner].map(o => o || 'geen eigenaar').join(', ') : 'alle eigenaars');
   if (S.selecting && S.selected.size) parts.push(`eigen selectie van ${plural(S.selected.size, 'foto', 'foto\'s')} (zonder losse notities)`);
   parts.push(S.ovSort === 'status' ? 'volgorde op status' : 'volgorde op nummer');
   return 'Filter: ' + parts.join(', ');
 }
 
 /* ---------------- notitielijst: losse notities zonder foto ---------------- */
-const NT = { status: '' };
+const NT = { status: '', owner: '' };
 async function nextNoteNr(project) {
   return (await getAllNotes()).filter(n => n.project === project).reduce((m, n) => Math.max(m, n.nr || 0), 0) + 1;
 }
 const ntTargetProject = () => (S.ntProject && S.ntProject !== '__all__' ? S.ntProject : S.project);
 async function openNotes() {
-  S.ntProject = S.project || '__all__'; S.ntStatus.clear(); NT.status = '';
+  S.ntProject = S.project || '__all__'; S.ntStatus.clear(); S.ntOwner.clear(); NT.status = ''; NT.owner = '';
   $('#ntText').value = '';
   show('Notes');
   await loadNotes();
@@ -996,9 +1081,8 @@ async function loadNotes() {
   if (S.ntProject !== '__all__' && !projects.includes(S.ntProject)) S.ntProject = '__all__';
   sel.value = S.ntProject;
   const inProj = all.filter(n => S.ntProject === '__all__' || n.project === S.ntProject);
-  renderFilter(inProj, '#ntFilter', S.ntStatus, loadNotes);
-  const list = inProj.filter(n => !S.ntStatus.size || S.ntStatus.has(statusOf(n))).sort(listOrder);
-  const photoList = list.filter(n => n.kind !== 'note');
+  renderFilter(inProj, '#ntFilter', S.ntStatus, loadNotes, S.ntOwner);
+  const list = inProj.filter(n => (!S.ntStatus.size || S.ntStatus.has(statusOf(n))) && ownerOk(S.ntOwner, n)).sort(listOrder);
   ntUrls.forEach(u => URL.revokeObjectURL(u)); ntUrls = [];
   const box = $('#ntList'); box.replaceChildren();
   for (const n of list) {
@@ -1009,20 +1093,18 @@ async function loadNotes() {
     let lead, open;
     if (isPhoto) {
       const u = URL.createObjectURL(n.thumb); ntUrls.push(u);
-      open = () => openPhotoFromNotes(n.id, photoList);
+      open = () => openPhotoFromNotes(n.id, list);
       lead = el('button', { class: 'nt-lead', 'aria-label': 'Foto openen', onclick: open }, el('img', { src: u, alt: '' }), el('span', { class: 'nt-cam' }, ico('camera')));
     } else {
       open = () => editNote(row, n);
       lead = el('button', { class: 'nt-lead', 'aria-label': 'Notitie bewerken', onclick: open }, ico('list'));
     }
-    const projBtn = isPhoto ? el('span', { class: 'nt-proj' }, n.project)
-      : el('button', { class: 'nt-proj', onclick: e => { e.stopPropagation(); noteProjectMenu(projBtn, n); } }, n.project);
-    const when = isPhoto ? `${dateOf(n)} ${timeOf(n)}`.trim() : `${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`;
+    // projectnaam enkel bij "Alle projecten"; datum/uur zie je pas als je de notitie opent
     const text = isPhoto ? n.note : n.text;
     row.append(lead, el('div', { class: 'nt-main', onclick: open },
-      el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, isPhoto ? `Fotonotitie #${n.nr}` : `Losse notitie N${n.nr}`)),
+      el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, isPhoto ? `#${n.nr}` : `N${n.nr}`), n.owner ? el('span', { class: 'nt-owner' }, ico('user'), n.owner) : null),
       el('div', { class: 'nt-text' + (text ? '' : ' empty') }, text || 'Geen tekst op de foto'),
-      el('div', { class: 'nt-sub' }, projBtn, when ? `  ·  ${when}` : '')));
+      S.ntProject === '__all__' ? el('div', { class: 'nt-sub' }, el('span', { class: 'nt-proj' }, n.project)) : null));
     box.append(row);
   }
   $('#ntEmpty').classList.toggle('hidden', list.length > 0);
@@ -1031,9 +1113,24 @@ async function loadNotes() {
   $('#ntText').placeholder = tp ? `Nieuwe losse notitie voor ${tp}` : 'Nieuwe losse notitie (kies eerst een project)';
   refreshCamBar();
 }
-/* Foto openen vanuit de notitielijst: vegen gaat door de fotonotities van de lijst, terug = notitielijst. */
-function openPhotoFromNotes(id, photoList) {
-  S.list = photoList; S.viewReturn = 'Notes';
+/* Openen vanuit de notitielijst: vegen gaat door de hele lijst (fotonotities én losse notities), terug = notitielijst. */
+function openPhotoFromNotes(id, viewList) {
+  S.list = viewList; S.viewReturn = 'Notes';
+  openViewer(id);
+}
+/* item uit de viewer-lijst halen en de volgende tonen (of terug als de lijst leeg is) */
+function viewerRemove(id) {
+  const i = S.list.findIndex(x => x.id === id);
+  S.list = S.list.filter(x => x.id !== id);
+  const n = S.list[Math.min(i, S.list.length - 1)];
+  if (i >= 0 && n) openViewer(n.id); else viewerBack();
+}
+/* na aanpassen/wissen van een losse notitie: lijst of viewer bijwerken */
+async function afterNoteChange(id, deleted) {
+  if (S.screen !== 'Viewer') { loadNotes(); return; }
+  if (deleted) { viewerRemove(id); return; }
+  const i = S.list.findIndex(x => x.id === id), fresh = await getNote(id);
+  if (i >= 0 && fresh) S.list[i] = { ...fresh, kind: 'note' };
   openViewer(id);
 }
 function viewerBack() {
@@ -1047,16 +1144,17 @@ function viewerBack() {
     b.onclick = () => { NT.status = NT.status === t ? '' : t; renderNoteTags(); };
     box.append(b);
   }
+  box.append(ownerBtn(NT.owner, b => ownerMenu(b, NT.owner, v => { NT.owner = v; renderNoteTags(); })));
 }
 async function addNote() {
   const text = $('#ntText').value.trim();
   if (!text) { $('#ntText').focus(); return; }
   let project = ntTargetProject();
   if (!project) { project = await pickProject($('#ntProject')); if (!project) return; }
-  const n = { id: newId(), kind: 'note', project, nr: await nextNoteNr(project), text, tags: NT.status ? [NT.status] : [], createdAt: Date.now() };
+  const n = { id: newId(), kind: 'note', project, nr: await nextNoteNr(project), text, tags: NT.status ? [NT.status] : [], owner: NT.owner || '', createdAt: Date.now() };
   await putNote(n);
   addProject(project);
-  $('#ntText').value = ''; NT.status = '';
+  $('#ntText').value = ''; NT.status = ''; NT.owner = '';
   toast(`Notitie N${n.nr} toegevoegd`);
   await loadNotes();
 }
@@ -1089,27 +1187,58 @@ function noteProjectMenu(anchor, n) {
 }
 function editNote(anchor, n) {
   const ta = el('textarea', { class: 'nt-edit', rows: 4 }); ta.value = n.text;
+  const st = { tags: [...(n.tags || [])], owner: n.owner || '' };
+  const projBtn = el('button', { class: 'nt-proj', onclick: () => { closeSheet(); noteProjectMenu(anchor, n); } }, n.project);
+  const tagBox = el('div', { class: 'tags pop-tags' });
+  const renderPopTags = () => {
+    tagBox.replaceChildren(...S.tags.map(t => {
+      const b = el('button', { class: 'tag' + (st.tags.includes(t) ? ' on' : ''), style: `--c:${tagColor(t)}` }, t);
+      b.onclick = () => { st.tags = st.tags.includes(t) ? [] : [t]; renderPopTags(); };
+      return b;
+    }), ownerSelect(st.owner, v => { st.owner = v; renderPopTags(); }));
+  };
+  renderPopTags();
   openSheet(el('div', {},
-    el('h4', { style: 'margin-top:0' }, `Notitie N${n.nr} · ${n.project}`),
+    el('div', { class: 'pop-head' },
+      el('div', { class: 'pop-title' }, el('b', {}, `N${n.nr}`), projBtn),
+      el('button', { class: 'ibtn pop-x', 'aria-label': 'Sluiten', onclick: () => closeSheet(true) }, ico('x'))),
+    el('div', { class: 'pop-meta' }, ico('clock'), `${fmtDate(tsOf(n))}  ${fmtTime(tsOf(n))}`, n.updatedAt ? el('span', {}, ' (aangepast)') : null),
+    tagBox,
     ta,
     el('div', { class: 'add-row', style: 'margin-top:10px' },
       el('button', { class: 'big danger', style: 'margin:0;flex:1', onclick: async () => {
         if (!confirm(`Notitie N${n.nr} verwijderen?`)) return;
-        await deleteNote(n.id); closeSheet(); toast('Verwijderd'); loadNotes();
+        await deleteNote(n.id); closeSheet(); toast('Verwijderd'); afterNoteChange(n.id, true);
       } }, ico('trash'), 'Wis'),
       el('button', { class: 'primary', style: 'flex:1', onclick: async () => {
         const t = ta.value.trim(); if (!t) return;
-        await putNote({ ...n, text: t, updatedAt: Date.now() }); closeSheet(); loadNotes();
+        const { kind, ...rest } = n;
+        await putNote({ ...rest, text: t, tags: st.tags, owner: st.owner, updatedAt: Date.now() }); closeSheet(); afterNoteChange(n.id);
       } }, 'Opslaan')),
   ), null, anchor);
-  setTimeout(() => ta.focus(), 100);
 }
-/* Notities die meegaan in de exports: zelfde project en statusfilter als het overzicht.
+/* eigenaar kiezen binnen een uitklapvenster: een tweede lijstje direct onder de knop */
+function ownerSelect(current, onPick) {
+  const wrap = el('span', { class: 'owner-sel' });
+  const b = el('button', { class: 'tag owner' + (current ? ' on' : '') }, ico('user'), current || 'Eigenaar', ico('chevronDown'));
+  b.onclick = () => {
+    if (wrap.querySelector('.owner-list')) { wrap.querySelector('.owner-list').remove(); return; }
+    const input = el('input', { type: 'text', placeholder: 'Nieuwe persoon', autocapitalize: 'words' });
+    const add = () => { const v = input.value.trim(); if (v) { addPerson(v); onPick(v); } };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+    wrap.append(el('div', { class: 'owner-list menu' },
+      ...S.people.map(p => el('button', { class: 'menu-item plain', onclick: () => onPick(p) }, ico('user'), p, p === current ? ico('check') : null)),
+      el('button', { class: 'menu-item plain muted', onclick: () => onPick('') }, ico('ban'), 'Geen eigenaar'),
+      el('div', { class: 'add-row' }, input, el('button', { class: 'primary', onclick: add }, '+'))));
+  };
+  wrap.append(b);
+  return wrap;
+}/* Notities die meegaan in de exports: zelfde project en statusfilter als het overzicht.
    Met een eigen selectie van foto's gaan er geen notities mee. */
 async function exportNotes() {
   if (S.selecting && S.selected.size) return [];
   return (await getAllNotes()).map(n => ({ ...n, kind: 'note' }))
-    .filter(n => (S.ovProject === '__all__' || n.project === S.ovProject) && (!S.ovStatus.size || S.ovStatus.has(statusOf(n))));
+    .filter(n => (S.ovProject === '__all__' || n.project === S.ovProject) && (!S.ovStatus.size || S.ovStatus.has(statusOf(n))) && ownerOk(S.ovOwner, n));
 }
 const mergeItems = (photos, notes = []) => [...photos, ...notes].sort(S.ovSort === 'status' ? (a, b) => statusRank(a) - statusRank(b) || byNr(a, b) : byNr);
 function renderGrid() {
@@ -1289,8 +1418,10 @@ async function ovAction(act) {
   try {
     if (act === 'share') {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
-      const rt = reportTitle(list, filterDesc());
-      await shareFiles(files, rt.title, rt.mail);
+      const items = mergeItems(list, await exportNotes());
+      const rt = reportTitle(items, filterDesc());
+      copyTableHtml(items, rt);
+      await shareFiles(files, rt.title, mailBody(items, rt));
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
       await downloadMany(files);
@@ -1299,8 +1430,9 @@ async function ovAction(act) {
       deliverSheet([f], reportTitle(mergeItems(list, notes)).title);
     } else if (act === 'pdf') {
       busy('PDF maken…'); const f = await buildPdf(list, filterDesc(), notes); busy();
-      const rt = reportTitle(mergeItems(list, notes), filterDesc());
-      deliverSheet([f], rt.title, rt.mail);
+      const items = mergeItems(list, notes), rt = reportTitle(items, filterDesc());
+      copyTableHtml(items, rt);
+      deliverSheet([f], rt.title, mailBody(items, rt));
     } else if (act === 'word') {
       busy('Word maken…'); const f = await buildWord(list, filterDesc(), notes); busy();
       deliverSheet([f], reportTitle(mergeItems(list, notes)).title);
@@ -1328,28 +1460,50 @@ function reportTitle(items, filter = '') {
   const title = `Notities ${projName(items)} ${fmtDate(Date.now())}`;
   const sub = [counts, from ? 'periode ' + (from === to ? from : from + ' – ' + to) : ''].filter(Boolean).join(' · ');
   return { title, sub, filter, mail: [title, sub, filter].filter(Boolean).join('\n') };
-}const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
+}/* Overzichtstabel in de mail: dezelfde regels als de tabel in de PDF.
+   Een browser-app kan enkel platte tekst aan Outlook/Gmail geven, dus één regel per notitie. */
+function mailBody(items, rt) {
+  const many = new Set(items.map(p => p.project)).size > 1;
+  const lines = items.map(p => [nrOf(p).replace(/^(\d)/, '#$1'), many ? p.project : '', statusOf(p) || '–', ownerOf(p) ? '→ ' + ownerOf(p) : '',
+    (itemText(p) || '(geen tekst)').replace(/\s*\n\s*/g, ' / '),
+    p.kind === 'note' ? `${fmtDate(tsOf(p))} ${fmtTime(tsOf(p))}` : `${dateOf(p)} ${timeOf(p)}`.trim()].filter(Boolean).join('  |  '));
+  return [rt.mail, '', 'Overzicht', ...lines].join('\n');
+}
+/* Daarnaast een echte tabel op het klembord: in de mail lang drukken → Plakken. */
+function copyTableHtml(items, rt) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') return;
+    const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])).replace(/\n/g, '<br>');
+    const th = 'style="background:#3f3f46;color:#fff;text-align:left;padding:6px 8px;font:bold 13px Arial"';
+    const td = 'style="border-bottom:1px solid #ddd;padding:6px 8px;font:13px Arial;vertical-align:top"';
+    const rows = items.map(p => `<tr><td ${td}>${esc(nrOf(p))}</td><td ${td}>${esc(p.project)}</td><td ${td}>${statusOf(p) ? `<span style="color:${tagColor(statusOf(p))}">&#9679;</span> ${esc(statusOf(p))}` : ''}</td><td ${td}>${esc(ownerOf(p))}</td><td ${td}>${esc(itemText(p))}</td><td ${td}>${esc(p.kind === 'note' ? fmtDate(tsOf(p)) : dateOf(p))}</td><td ${td}>${esc(p.kind === 'note' ? fmtTime(tsOf(p)) : timeOf(p))}</td></tr>`).join('');
+    const html = `<div style="font:14px Arial"><b style="font-size:16px">${esc(rt.title)}</b><br>${esc(rt.sub)}<br>${esc(rt.filter)}<br><br><table style="border-collapse:collapse"><tr>${['Nr', 'Project', 'Status', 'Eigenaar', 'Notitie', 'Datum', 'Uur'].map(h => `<th ${th}>${h}</th>`).join('')}</tr>${rows}</table></div>`;
+    navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([mailBody(items, rt)], { type: 'text/plain' }) })])
+      .then(() => toast('Tabel gekopieerd: in de mail lang drukken → Plakken', true, 3500)).catch(() => {});
+  } catch { /* klembord niet beschikbaar */ }
+}
+const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
 async function buildExcel(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
-  const headers = ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
+  const headers = ['Nr', 'Project', 'Status', 'Eigenaar', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
   const { title, sub, filter } = reportTitle(items, note);
   const rows = items.map(p => p.kind === 'note'
-    ? [nrOf(p), p.project, p.tags.join(', '), itemText(p), fmtDate(tsOf(p)), fmtTime(tsOf(p)), '', '', '', 'notitie']
-    : [p.nr, p.project, p.tags.join(', '), itemText(p), dateOf(p), timeOf(p),
+    ? [nrOf(p), p.project, p.tags.join(', '), ownerOf(p), itemText(p), fmtDate(tsOf(p)), fmtTime(tsOf(p)), '', '', '', 'notitie']
+    : [p.nr, p.project, p.tags.join(', '), ownerOf(p), itemText(p), dateOf(p), timeOf(p),
       p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
       fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '']);
-  const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub, filter].filter(Boolean));
+  const blob = await makeXlsx(headers, rows, [6, 20, 12, 16, 50, 11, 7, 34, 34, 38, 12], [title, sub, filter].filter(Boolean));
   return new File([blob], exportName(items) + '.xlsx', { type: blob.type });
 }
 /* Oplijsting vooraan in PDF en Word: zoals Excel, tot en met Uur (foto's + losse notities). */
 function reportTable(items) {
   return {
-    headers: ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur'],
-    widths: [5, 17, 10, 52, 10, 6],
+    headers: ['Nr', 'Project', 'Status', 'Eigenaar', 'Notitie', 'Datum', 'Uur'],
+    widths: [5, 15, 9, 11, 44, 10, 6],
     rows: items.map(p => [
       nrOf(p), p.project,
       p.tags.length ? { t: p.tags.join(', '), c: tagColor(p.tags[0]) } : '',
-      itemText(p), p.kind === 'note' ? fmtDate(tsOf(p)) : dateOf(p), p.kind === 'note' ? fmtTime(tsOf(p)) : timeOf(p),
+      ownerOf(p), itemText(p), p.kind === 'note' ? fmtDate(tsOf(p)) : dateOf(p), p.kind === 'note' ? fmtTime(tsOf(p)) : timeOf(p),
     ]),
   };
 }
@@ -1385,11 +1539,46 @@ async function buildZip(list, note = '', notes = []) {
 }
 /* ---------------- detail ---------------- */
 let vwUrl;
+/* Losse notitie in de viewer: als kaart getoond, zodat je er ook naartoe kunt vegen. */
+async function noteCardBlob(n) {
+  const W = 1000, pad = 64, fs = 46, LN = fs * 1.35;
+  const m = document.createElement('canvas').getContext('2d'); m.font = FONT(fs);
+  const lines = wrapText(m, n.text || '', W - 2 * pad);
+  const H = Math.round(Math.max(760, pad * 2 + 250 + lines.length * LN));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#18181b'; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'alphabetic';
+  let y = pad + 48;
+  ctx.font = FONT(56, 700); ctx.fillStyle = '#fff';
+  const nrT = `N${n.nr}  `, nrW = ctx.measureText(nrT).width; ctx.fillText(nrT, pad, y);
+  ctx.fillStyle = PROJECT_YELLOW; ctx.fillText(ellipsize(ctx, n.project, W - 2 * pad - nrW), pad + nrW, y);
+  y += 54; ctx.font = FONT(30, 400); ctx.fillStyle = '#a1a1aa';
+  ctx.fillText(`${fmtDate(tsOf(n))}  ${fmtTime(tsOf(n))}${n.updatedAt ? '  (aangepast)' : ''}`, pad, y);
+  y += 34; ctx.textBaseline = 'top';
+  let x = pad; const th = 52, tfs = 30;
+  for (const t of n.tags || []) {
+    ctx.font = FONT(tfs, 600); const tw = ctx.measureText(t).width + tfs * 1.9;
+    ctx.fillStyle = tagColor(t) + '33'; ctx.beginPath(); ctx.roundRect(x, y, tw, th, th / 2); ctx.fill();
+    ctx.strokeStyle = tagColor(t); ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = tagColor(t); ctx.beginPath(); ctx.arc(x + tfs * 0.75, y + th / 2, tfs * 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(t, x + tfs * 1.2, y + (th - tfs) / 2 + 1);
+    x += tw + 18;
+  }
+  if (n.owner) { ctx.font = FONT(34, 500); ctx.fillStyle = '#d4d4d8'; ctx.fillText('→ ' + n.owner, x, y + (th - 34) / 2); }
+  y += th + 40;
+  ctx.font = FONT(fs, 400); ctx.fillStyle = '#f4f4f5';
+  for (const l of lines) { ctx.fillText(l, pad, y); y += LN; }
+  return toBlob(c, 0.9);
+}
 async function openViewer(id, dir = 0) {
-  const p = await getPhoto(id);
+  const asNote = S.list.find(x => x.id === id)?.kind === 'note';
+  const p = asNote ? await getNote(id) : await getPhoto(id);
   if (!p) { viewerBack(); return; }
-  S.viewId = id;
-  const url = URL.createObjectURL(await getBlob(id + ':ann'));
+  if (asNote) p.kind = 'note';
+  S.viewId = id; S.viewNote = asNote ? p : null;
+  $('#scrViewer').classList.toggle('is-note', asNote);
+  const url = URL.createObjectURL(asNote ? await noteCardBlob(p) : await getBlob(id + ':ann'));
   const img = $('#vwImg');
   await new Promise(res => { img.onload = img.onerror = res; img.src = url; });
   if (vwUrl) URL.revokeObjectURL(vwUrl);
@@ -1403,7 +1592,7 @@ async function openViewer(id, dir = 0) {
     img.style.transition = 'transform .22s ease, opacity .22s ease'; img.style.transform = ''; img.style.opacity = '';
   }
   const i = S.list.findIndex(x => x.id === id);
-  $('#vwTitle').textContent = `#${p.nr}  ${p.project}`;
+  $('#vwTitle').textContent = `${asNote ? 'N' : '#'}${p.nr}  ${p.project}`;
   $('#vwPos').textContent = i >= 0 && S.list.length > 1 ? `${i + 1} / ${S.list.length}` : '';
   $('#vwPrev').disabled = i <= 0; $('#vwNext').disabled = i < 0 || i >= S.list.length - 1;
   // geen info onder de foto: die staat al in de balk op de foto zelf
@@ -1510,6 +1699,19 @@ function wireSwipe() {
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 }
 async function vwAction(act) {
+  if (S.viewNote) { // losse notitie
+    const n = S.viewNote;
+    if (act === 'edit') editNote(document.querySelector('[data-vw="edit"]'), n);
+    else if (act === 'share') {
+      const title = `Notities ${n.project} ${fmtDate(Date.now())}`;
+      const text = [title, `1 losse notitie: N${n.nr}${n.tags.length ? ' · ' + n.tags.join(', ') : ''}${n.owner ? ' · eigenaar ' + n.owner : ''}`, n.text, `${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`].join('\n');
+      try { await navigator.share({ title, text }); } catch (e) { if (e.name !== 'AbortError') { try { await navigator.clipboard.writeText(text); toast('Tekst gekopieerd'); } catch { alert(text); } } }
+    } else if (act === 'delete') {
+      if (!confirm(`Notitie N${n.nr} verwijderen?`)) return;
+      await deleteNote(n.id); toast('Verwijderd'); afterNoteChange(n.id, true);
+    }
+    return;
+  }
   const p = await getPhoto(S.viewId); if (!p) return;
   try {
     if (act === 'edit') {
@@ -1526,11 +1728,8 @@ async function vwAction(act) {
       deliverSheet([new File([ob], `${fileBase(p)}_origineel.${extOf(ob)}`, { type: ob.type || 'image/jpeg' })], 'Originele foto');
     } else if (act === 'delete') {
       if (!confirm(`Foto #${p.nr} definitief uit de app verwijderen?`)) return;
-      const i = S.list.findIndex(x => x.id === p.id);
       await deletePhoto(p.id); toast('Verwijderd');
-      S.list = S.list.filter(x => x.id !== p.id);
-      const n = S.list[Math.min(i, S.list.length - 1)];
-      if (i >= 0 && n) openViewer(n.id); else viewerBack();
+      viewerRemove(p.id);
     }
   } catch (e) { alert('Mislukt: ' + e.message); }
 }

@@ -1,7 +1,7 @@
 // Fotonotities service worker.
 // Met internet: altijd eerst de nieuwste versie ophalen (max. 3 s wachten).
 // Zonder internet of bij traag netwerk: de bewaarde versie gebruiken.
-const CACHE = 'werfnotities-v17';
+const CACHE = 'werfnotities-v20';
 const FILES = ['./', './index.html', './style.css', './app.js', './lib.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
