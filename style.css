@@ -378,3 +378,10 @@ img { -webkit-touch-callout:none; }
 #ntSelect.icon-only .ic { width:20px; height:20px; }
 
 #scrNotes .bar .ibtn { width:36px; }
+
+/* ---------- v4.2: exportmenu met uitleg ---------- */
+.menu-item.two { height:auto; min-height:52px; padding:8px 10px; align-items:flex-start; }
+.menu-item.two > .ic:first-child { margin-top:2px; }
+.mi-txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.mi-txt b { font-weight:600; font-size:15px; }
+.mi-txt small { font-size:12px; line-height:1.3; color:var(--fg-3); font-weight:400; }

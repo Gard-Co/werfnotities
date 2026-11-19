@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.1';
+const APP_VERSION = '4.2';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1416,15 +1416,15 @@ function exportMenu() {
   const n = S.selecting && S.selected.size ? S.selected.size : 0;
   const what = n ? `selectie (${n})` : 'alles in de lijst';
   const act = a => () => { closeSheet(); ovAction(a); };
-  const item = (icon, label, fn, cls = '') => el('button', { class: 'menu-item plain ' + cls, onclick: fn }, ico(icon), label);
+  const item2 = (icon, label, desc, fn) => el('button', { class: 'menu-item plain two', onclick: fn }, ico(icon), el('span', { class: 'mi-txt' }, el('b', {}, label), el('small', {}, desc)));
   openSheet(el('div', { class: 'menu' },
     el('h4', {}, `Exporteren · ${what}`),
-    item('share', 'Foto\'s delen / mailen', act('share')),
-    item('download', 'Foto\'s opslaan', act('save')),
-    item('sheet', 'Excel', act('excel')),
-    item('doc', 'PDF', act('pdf')),
-    item('word', 'Word', act('word')),
-    item('archive', 'ZIP (alles)', act('zip')),
+    item2('share', 'Foto\'s delen / mailen', 'foto\'s met notitie · in de mail ook de notitielijst', act('share')),
+    item2('download', 'Foto\'s opslaan', 'foto\'s met notitie in Downloads', act('save')),
+    item2('doc', 'PDF delen / mailen', 'tabel met alle notities + foto\'s met notitie', act('pdf')),
+    item2('sheet', 'Excel', 'tabel met alle notities · opslaan in Downloads', act('excel')),
+    item2('word', 'Word', 'zelfde als PDF, nog aan te passen · opslaan', act('word')),
+    item2('archive', 'ZIP met alles', 'originele foto\'s + foto\'s met notitie + Excel + PDF · opslaan', act('zip')),
   ), null, $('#ntExport'));
 }
 /* ⋮-menu: selecteren, importeren, project */
