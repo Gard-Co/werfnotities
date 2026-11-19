@@ -1,7 +1,7 @@
 'use strict';
-/* Werfnotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
+/* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.6';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -200,7 +200,7 @@ function show(name) {
 window.addEventListener('popstate', () => {
   if (sheetOpen()) closeSheet(true);
   else if (S.screen === 'Editor') { if (ED.cropMode) setCropMode(false); else editorCancel(); }
-  else if (S.screen === 'Viewer') { show('Overview'); loadOverview(); }
+  else if (S.screen === 'Viewer') viewerBack();
   else if (S.screen === 'Overview') { if (S.selecting) setSelecting(false); else show('Camera'); }
   else if (S.screen === 'Notes') show('Camera');
   if (S.screen !== 'Camera' || sheetOpen()) armBack();
@@ -326,7 +326,8 @@ async function refreshCamBar() {
   $('#projName').textContent = S.project || 'Kies project';
   const mine = (await getAllPhotos()).filter(p => p.project === S.project).sort((a, b) => b.createdAt - a.createdAt);
   $('#count').textContent = mine.length || '';
-  const nNotes = (await getAllNotes()).filter(n => n.project === S.project).length;
+  // teller op de knop Notities: losse notities + fotonotities van dit project
+  const nNotes = (await getAllNotes()).filter(n => n.project === S.project).length + mine.length;
   $('#ntCount').textContent = nNotes || '';
   const img = $('#lastThumb');
   if (img.dataset.u) URL.revokeObjectURL(img.dataset.u);
@@ -425,7 +426,7 @@ async function openSettings() {
     el('h4', {}, 'Tips'),
     el('p', {}, 'Tik op de microfoon van je toetsenbord om een notitie in te spreken.'),
     el('p', {}, 'In het overzicht selecteer je foto\'s door lang te drukken. In een geopende foto veeg je naar links of rechts voor de volgende.'),
-    el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Werfnotities ' + APP_VERSION + ' · Gard&Co'),
+    el('p', { style: 'color:var(--fg-3);margin-top:18px' }, 'Fotonotities ' + APP_VERSION + ' · Gard&Co'),
   ), null, $('#btnSettings'));
   try {
     const persisted = await navigator.storage?.persisted?.();
@@ -903,7 +904,7 @@ async function importAnnotated(files) {
   const parts = [`${plural(added, 'foto', 'foto\'s')} geïmporteerd`];
   if (skipped) parts.push(`${skipped} stonden al in de app`);
   if (noMeta) parts.push(`${noMeta} zonder notitie-info overgeslagen`);
-  if (noMeta && !added) alert(parts.join('\n') + '\n\nAlleen foto\'s die met Werfnotities 1.2 of later zijn opgeslagen of gedeeld, bevatten de info. Via WhatsApp verstuurde foto\'s verliezen die info.');
+  if (noMeta && !added) alert(parts.join('\n') + '\n\nAlleen foto\'s die met deze app (versie 1.2 of later) zijn opgeslagen of gedeeld, bevatten de info. Via WhatsApp verstuurde foto\'s verliezen die info.');
   else toast(parts.join(' · '), added > 0, 3000);
   if (S.screen === 'Overview') loadOverview(); else refreshCamBar();
 }
@@ -911,7 +912,7 @@ async function importAnnotated(files) {
 /* ---------------- overzicht ---------------- */
 let gridUrls = [];
 async function openOverview() {
-  S.ovProject = S.project || '__all__'; S.ovStatus.clear();
+  S.ovProject = S.project || '__all__'; S.ovStatus.clear(); S.viewReturn = 'Overview';
   setSelecting(false, true);
   show('Overview');
   await loadOverview();
@@ -950,15 +951,23 @@ function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = load
       reload();
     } }, color ? el('i') : null, label, el('b', {}, String(n)));
   };
-  $(box).replaceChildren(
+  $(box).replaceChildren(...[
     el('button', { class: 'fsort', onclick: () => { S.ovSort = S.ovSort === 'status' ? 'date' : 'status'; LS.set('ovSort', S.ovSort); reload(); } },
       ico('sort'), S.ovSort === 'status' ? 'Status' : 'Nieuwste'),
     chip(null, 'Alle'),
     ...[...S.tags, ...extra].map(t => chip(t, t, tagColor(t))),
     cnt[''] ? chip('', 'Geen status', '#71717a') : null,
-  );
+  ].filter(Boolean));
 }
-const filterNote = () => (S.ovStatus.size ? 'filter: ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : '');
+/* Welke filters zijn gebruikt (staat in elke export en mail). */
+function filterDesc() {
+  const parts = [];
+  if (S.ovProject === '__all__') parts.push('alle projecten');
+  parts.push(S.ovStatus.size ? 'status ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : 'alle statussen');
+  if (S.selecting && S.selected.size) parts.push(`eigen selectie van ${plural(S.selected.size, 'foto', 'foto\'s')} (zonder losse notities)`);
+  parts.push(S.ovSort === 'status' ? 'volgorde op status' : 'volgorde op nummer');
+  return 'Filter: ' + parts.join(', ');
+}
 
 /* ---------------- notitielijst: losse notities zonder foto ---------------- */
 const NT = { status: '' };
@@ -972,8 +981,12 @@ async function openNotes() {
   show('Notes');
   await loadNotes();
 }
+/* Notitielijst toont alles: losse notities én de notities op foto's (fotonotities). */
+let ntUrls = [];
 async function loadNotes() {
-  const all = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
+  const notes = (await getAllNotes()).map(n => ({ ...n, kind: 'note' }));
+  const photos = await getAllPhotos();
+  const all = [...notes, ...photos];
   const counts = {};
   all.forEach(n => { counts[n.project] = (counts[n.project] || 0) + 1; });
   const projects = [...new Set([...S.projects, ...Object.keys(counts)])];
@@ -985,25 +998,48 @@ async function loadNotes() {
   const inProj = all.filter(n => S.ntProject === '__all__' || n.project === S.ntProject);
   renderFilter(inProj, '#ntFilter', S.ntStatus, loadNotes);
   const list = inProj.filter(n => !S.ntStatus.size || S.ntStatus.has(statusOf(n))).sort(listOrder);
+  const photoList = list.filter(n => n.kind !== 'note');
+  ntUrls.forEach(u => URL.revokeObjectURL(u)); ntUrls = [];
   const box = $('#ntList'); box.replaceChildren();
   for (const n of list) {
-    const st = statusOf(n);
-    const row = el('div', { class: 'nt-row' });
+    const isPhoto = n.kind !== 'note', st = statusOf(n);
+    const row = el('div', { class: 'nt-row' + (isPhoto ? ' is-photo' : ' is-note') });
     const stBtn = el('button', { class: 'nt-st' + (st ? '' : ' none'), style: st ? `--c:${tagColor(st)}` : null,
-      onclick: () => noteStatusMenu(stBtn, n) }, el('i'), st || 'Status');
-    const projBtn = el('button', { class: 'nt-proj', onclick: e => { e.stopPropagation(); noteProjectMenu(projBtn, n); } }, n.project);
-    row.append(stBtn, el('div', { class: 'nt-main', onclick: () => editNote(row, n) },
-      el('div', { class: 'nt-text' }, n.text),
-      el('div', { class: 'nt-sub' }, projBtn, `  ·  N${n.nr}  ·  ${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`)));
+      onclick: e => { e.stopPropagation(); noteStatusMenu(stBtn, n); } }, el('i'), st || 'Status');
+    let lead, open;
+    if (isPhoto) {
+      const u = URL.createObjectURL(n.thumb); ntUrls.push(u);
+      open = () => openPhotoFromNotes(n.id, photoList);
+      lead = el('button', { class: 'nt-lead', 'aria-label': 'Foto openen', onclick: open }, el('img', { src: u, alt: '' }), el('span', { class: 'nt-cam' }, ico('camera')));
+    } else {
+      open = () => editNote(row, n);
+      lead = el('button', { class: 'nt-lead', 'aria-label': 'Notitie bewerken', onclick: open }, ico('list'));
+    }
+    const projBtn = isPhoto ? el('span', { class: 'nt-proj' }, n.project)
+      : el('button', { class: 'nt-proj', onclick: e => { e.stopPropagation(); noteProjectMenu(projBtn, n); } }, n.project);
+    const when = isPhoto ? `${dateOf(n)} ${timeOf(n)}`.trim() : `${fmtDate(tsOf(n))} ${fmtTime(tsOf(n))}`;
+    const text = isPhoto ? n.note : n.text;
+    row.append(lead, el('div', { class: 'nt-main', onclick: open },
+      el('div', { class: 'nt-head' }, stBtn, el('span', { class: 'nt-kind' }, isPhoto ? `Fotonotitie #${n.nr}` : `Losse notitie N${n.nr}`)),
+      el('div', { class: 'nt-text' + (text ? '' : ' empty') }, text || 'Geen tekst op de foto'),
+      el('div', { class: 'nt-sub' }, projBtn, when ? `  ·  ${when}` : '')));
     box.append(row);
   }
   $('#ntEmpty').classList.toggle('hidden', list.length > 0);
   renderNoteTags();
   const tp = ntTargetProject();
-  $('#ntText').placeholder = tp ? `Nieuwe notitie voor ${tp}` : 'Nieuwe notitie (kies eerst een project)';
+  $('#ntText').placeholder = tp ? `Nieuwe losse notitie voor ${tp}` : 'Nieuwe losse notitie (kies eerst een project)';
   refreshCamBar();
 }
-function renderNoteTags() {
+/* Foto openen vanuit de notitielijst: vegen gaat door de fotonotities van de lijst, terug = notitielijst. */
+function openPhotoFromNotes(id, photoList) {
+  S.list = photoList; S.viewReturn = 'Notes';
+  openViewer(id);
+}
+function viewerBack() {
+  if (S.viewReturn === 'Notes') { show('Notes'); loadNotes(); }
+  else { show('Overview'); loadOverview(); }
+}function renderNoteTags() {
   const box = $('#ntTags'); box.replaceChildren();
   for (const t of S.tags) {
     const b = el('button', { class: 'tag' + (NT.status === t ? ' on' : ''), style: `--c:${tagColor(t)}` }, t);
@@ -1025,7 +1061,15 @@ async function addNote() {
   await loadNotes();
 }
 function noteStatusMenu(anchor, n) {
-  const pick = async t => { const cur = { ...n, tags: t ? [t] : [], updatedAt: Date.now() }; await putNote(cur); closeSheet(); loadNotes(); };
+  const pick = async t => {
+    closeSheet();
+    if (n.kind !== 'note') { // fotonotitie: status aanpassen en de balk op de foto opnieuw maken
+      const p = await getPhoto(n.id); if (!p) return;
+      p.tags = t ? [t] : []; busy('Opslaan…');
+      try { await rerender(p); } finally { busy(); }
+    } else await putNote({ ...n, tags: t ? [t] : [], updatedAt: Date.now() });
+    loadNotes();
+  };
   openSheet(el('div', { class: 'menu' },
     ...S.tags.map(t => el('button', { class: 'menu-item', style: `--c:${tagColor(t)}`, onclick: () => pick(t) }, el('i'), t, statusOf(n) === t ? ico('check') : null)),
     el('button', { class: 'menu-item', style: '--c:#71717a', onclick: () => pick('') }, el('i'), 'Geen status', statusOf(n) ? null : ico('check')),
@@ -1117,10 +1161,8 @@ function targets() {
   // gesorteerd op status: zelfde volgorde als op het scherm (NOK, ToDo, OK, Testen); anders per nummer
   return S.ovSort === 'status' ? [...arr] : [...arr].sort(byNr);
 }
-function exportName(list) {
-  const projs = [...new Set(list.map(p => p.project))];
-  return `Werfnotities_${projs.length === 1 ? safe(projs[0]) : 'alle'}_${isoDay(Date.now())}`;
-}
+// bestandsnaam: Notities_Projectnaam_datum
+function exportName(items) { return `Notities_${safe(projName(items))}_${isoDay(Date.now())}`; }
 async function annFiles(list) {
   const out = [];
   for (const p of list) out.push(new File([await withMeta(await getBlob(p.id + ':ann'), p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
@@ -1145,7 +1187,7 @@ async function closeProject(proj) {
   const what = [list.length ? plural(list.length, 'foto', 'foto\'s') : '', notes.length ? plural(notes.length, 'notitie', 'notities') : ''].filter(Boolean).join(' en ');
   busy('ZIP maken…');
   let zip;
-  try { zip = await buildZip(list, '', notes); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
+  try { zip = await buildZip(list, 'Filter: geen (volledig project, project afgesloten)', notes); } catch (e) { busy(); alert('ZIP maken mislukt: ' + e.message); return; }
   busy();
   const delBtn = bigBtn('trash', 'Alles uit de app wissen', async () => {
     if (!confirm(`Alle ${what} van "${proj}" uit de app wissen?\n\nDe ZIP en de kopieën in Downloads blijven bestaan.`)) return;
@@ -1247,23 +1289,23 @@ async function ovAction(act) {
   try {
     if (act === 'share') {
       busy(`${plural(list.length, 'foto', 'foto\'s')} klaarzetten…`); const files = await annFiles(list); busy();
-      const rt = reportTitle(list, filterNote());
-      await shareFiles(files, rt.title, rt.sub + '\n\nGard&Co Werfnotities');
+      const rt = reportTitle(list, filterDesc());
+      await shareFiles(files, rt.title, rt.mail);
     } else if (act === 'save') {
       busy('Voorbereiden…'); const files = await annFiles(list); busy();
       await downloadMany(files);
     } else if (act === 'excel') {
-      busy('Excel maken…'); const f = await buildExcel(list, filterNote(), notes); busy();
-      deliverSheet([f], 'Excel-export');
+      busy('Excel maken…'); const f = await buildExcel(list, filterDesc(), notes); busy();
+      deliverSheet([f], reportTitle(mergeItems(list, notes)).title);
     } else if (act === 'pdf') {
-      busy('PDF maken…'); const f = await buildPdf(list, filterNote(), notes); busy();
-      const rt = reportTitle(mergeItems(list, notes), filterNote());
-      deliverSheet([f], rt.title, 'Verslag in bijlage (PDF).\n' + rt.sub + '\n\nGard&Co Werfnotities');
+      busy('PDF maken…'); const f = await buildPdf(list, filterDesc(), notes); busy();
+      const rt = reportTitle(mergeItems(list, notes), filterDesc());
+      deliverSheet([f], rt.title, rt.mail);
     } else if (act === 'word') {
-      busy('Word maken…'); const f = await buildWord(list, filterNote(), notes); busy();
-      deliverSheet([f], 'Word-verslag');
+      busy('Word maken…'); const f = await buildWord(list, filterDesc(), notes); busy();
+      deliverSheet([f], reportTitle(mergeItems(list, notes)).title);
     } else if (act === 'zip') {
-      busy('ZIP maken…'); const f = await buildZip(list, filterNote(), notes); busy();
+      busy('ZIP maken…'); const f = await buildZip(list, filterDesc(), notes); busy();
       deliverSheet([f], 'ZIP met alles');
     } else if (act === 'delete') {
       if (!S.selected.size) return;
@@ -1276,28 +1318,27 @@ async function ovAction(act) {
 
 /* ---------------- exports ----------------
    list = foto's (in volgorde), notes = losse notities; de tabel bevat beide, de foto-pagina's enkel foto's. */
-function reportTitle(items, note = '') {
-  const projs = [...new Set(items.map(p => p.project))];
+const projName = items => { const ps = [...new Set(items.map(p => p.project))]; return ps.length === 1 ? ps[0] : 'alle projecten'; };
+/* Onderwerp/titel: "Notities Projectnaam datum". sub: aantallen + periode. filter: welke filters gebruikt zijn. */
+function reportTitle(items, filter = '') {
   const times = items.filter(p => !p.noDate).map(tsOf);
   const from = times.length ? fmtDate(Math.min(...times)) : '', to = times.length ? fmtDate(Math.max(...times)) : '';
   const nP = items.filter(p => p.kind !== 'note').length, nN = items.length - nP;
-  const counts = [nP ? plural(nP, 'foto', 'foto\'s') : '', nN ? plural(nN, 'notitie', 'notities') : ''].filter(Boolean).join(' + ');
-  return {
-    title: 'Verslag – ' + (projs.length === 1 ? projs[0] : projs.join(', ')),
-    sub: [counts, from === to ? from : from + ' – ' + to, 'opgemaakt ' + fmtDate(Date.now()), note].filter(Boolean).join(' · '),
-  };
-}
-const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
+  const counts = [nP ? plural(nP, 'fotonotitie', 'fotonotities') : '', nN ? plural(nN, 'losse notitie', 'losse notities') : ''].filter(Boolean).join(' en ');
+  const title = `Notities ${projName(items)} ${fmtDate(Date.now())}`;
+  const sub = [counts, from ? 'periode ' + (from === to ? from : from + ' – ' + to) : ''].filter(Boolean).join(' · ');
+  return { title, sub, filter, mail: [title, sub, filter].filter(Boolean).join('\n') };
+}const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
 async function buildExcel(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
   const headers = ['Nr', 'Project', 'Status', 'Notitie', 'Datum', 'Uur', 'Adres', 'Foto met notitie', 'Foto origineel', 'Bron'];
-  const { title, sub } = reportTitle(items, note);
+  const { title, sub, filter } = reportTitle(items, note);
   const rows = items.map(p => p.kind === 'note'
     ? [nrOf(p), p.project, p.tags.join(', '), itemText(p), fmtDate(tsOf(p)), fmtTime(tsOf(p)), '', '', '', 'notitie']
     : [p.nr, p.project, p.tags.join(', '), itemText(p), dateOf(p), timeOf(p),
       p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : ''),
       fileBase(p) + '.jpg', fileBase(p) + '_origineel.' + extOf({ type: p.origType }), p.source || '']);
-  const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub]);
+  const blob = await makeXlsx(headers, rows, [6, 20, 12, 50, 11, 7, 34, 34, 38, 12], [title, sub, filter].filter(Boolean));
   return new File([blob], exportName(items) + '.xlsx', { type: blob.type });
 }
 /* Oplijsting vooraan in PDF en Word: zoals Excel, tot en met Uur (foto's + losse notities). */
@@ -1319,14 +1360,14 @@ async function reportImages(list) {
 }
 async function buildPdf(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
-  const { title, sub } = reportTitle(items, note);
-  const blob = await makePdf(title, sub, await reportImages(list), reportTable(items));
+  const { title, sub, filter } = reportTitle(items, note);
+  const blob = await makePdf(title, [sub, filter].filter(Boolean).join('  ·  '), await reportImages(list), reportTable(items));
   return new File([blob], exportName(items) + '.pdf', { type: 'application/pdf' });
 }
 async function buildWord(list, note = '', notes = []) {
   const items = mergeItems(list, notes);
-  const { title, sub } = reportTitle(items, note);
-  const blob = await makeDocx(title, sub, await reportImages(list), reportTable(items));
+  const { title, sub, filter } = reportTitle(items, note);
+  const blob = await makeDocx(title, [sub, filter].filter(Boolean).join('  ·  '), await reportImages(list), reportTable(items));
   return new File([blob], exportName(items) + '.docx', { type: blob.type });
 }
 async function buildZip(list, note = '', notes = []) {
@@ -1346,7 +1387,7 @@ async function buildZip(list, note = '', notes = []) {
 let vwUrl;
 async function openViewer(id, dir = 0) {
   const p = await getPhoto(id);
-  if (!p) { show('Overview'); loadOverview(); return; }
+  if (!p) { viewerBack(); return; }
   S.viewId = id;
   const url = URL.createObjectURL(await getBlob(id + ':ann'));
   const img = $('#vwImg');
@@ -1475,7 +1516,9 @@ async function vwAction(act) {
       const ob = await getBlob(p.id + ':orig');
       openEditor({ ...p, tags: [...p.tags], shapes: p.shapes.map(s => ({ ...s, pts: s.pts.map(q => [...q]) })), origBlob: ob, wantPos: false }, 'Viewer');
     } else if (act === 'share') {
-      await shareFiles(await annFiles([p]), `#${p.nr} ${p.project}`, [p.note, dateOf(p) + ' ' + timeOf(p), p.address].filter(s => s && s.trim()).join('\n'));
+      const rt = reportTitle([p]);
+      await shareFiles(await annFiles([p]), rt.title,
+        [rt.title, `1 fotonotitie: #${p.nr}${p.tags.length ? ' · ' + p.tags.join(', ') : ''}`, p.note, (dateOf(p) + ' ' + timeOf(p)).trim(), p.address].filter(s => s && s.trim()).join('\n'));
     } else if (act === 'save') {
       download((await annFiles([p]))[0]); toast('Opgeslagen in Downloads');
     } else if (act === 'orig') {
@@ -1487,7 +1530,7 @@ async function vwAction(act) {
       await deletePhoto(p.id); toast('Verwijderd');
       S.list = S.list.filter(x => x.id !== p.id);
       const n = S.list[Math.min(i, S.list.length - 1)];
-      if (i >= 0 && n) openViewer(n.id); else { show('Overview'); loadOverview(); }
+      if (i >= 0 && n) openViewer(n.id); else viewerBack();
     }
   } catch (e) { alert('Mislukt: ' + e.message); }
 }
@@ -1533,7 +1576,7 @@ function wire() {
   $('#ovMenu').onclick = overviewMenu;
   $('#ovProject').onchange = e => { S.ovProject = e.target.value; S.ovStatus.clear(); S.selected.clear(); syncProject(e.target.value); loadOverview(); };
   $('#ovActions').querySelectorAll('button').forEach(b => { b.onclick = () => ovAction(b.dataset.act); });
-  $('#vwBack').onclick = () => { show('Overview'); loadOverview(); };
+  $('#vwBack').onclick = viewerBack;
   document.querySelectorAll('[data-vw]').forEach(b => { b.onclick = () => vwAction(b.dataset.vw); });
   $('#vwPrev').onclick = () => viewerStep(-1);
   $('#vwNext').onclick = () => viewerStep(1);
