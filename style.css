@@ -385,3 +385,10 @@ img { -webkit-touch-callout:none; }
 .mi-txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .mi-txt b { font-weight:600; font-size:15px; }
 .mi-txt small { font-size:12px; line-height:1.3; color:var(--fg-3); font-weight:400; }
+
+/* ---------- v4.3: batch import ---------- */
+.warn { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin:0 0 12px; border-radius:12px;
+  background:rgba(249,115,22,.12); border:1px solid rgba(249,115,22,.45); color:var(--fg); font-size:13.5px; line-height:1.4; }
+.warn .ic { width:20px; height:20px; color:#f97316; flex:none; margin-top:1px; }
+.warn b { font-weight:650; }
+.owner-list.projlist { flex-basis:100%; }

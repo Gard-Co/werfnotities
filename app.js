@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.2';
+const APP_VERSION = '4.4';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -52,6 +52,7 @@ const ICONS = {
   map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>',
+  alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
   user: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/>',
   word: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m8.5 12 1.2 5 1.3-3.5 1.3 3.5 1.2-5"/>',
@@ -339,6 +340,73 @@ function newDraft(blob, { source, date, lat, lon, name, noDate } = {}) {
     address: null, note: '', tags: [], shapes: [], crop: null, source, origBlob: blob, origName: name || null,
     wantPos: usePos,
   };
+}
+/* Uit galerij: één foto = bewerken zoals gewoonlijk; meerdere foto's = batch met één gezamenlijke notitie. */
+async function galleryFiles(files) {
+  if (!files.length) return;
+  if (files.length === 1) { importFile(files[0], 'galerij'); return; }
+  // foto's die al uit deze app komen (met verborgen info) worden gewoon teruggezet
+  const fresh = [], known = [];
+  for (const f of files) (await readMeta(f) ? known : fresh).push(f);
+  if (known.length) await importAnnotated(known);
+  if (!fresh.length) return;
+  if (!(await ensureProject())) return;
+  batchSheet(fresh);
+}
+function batchSheet(files) {
+  const n = files.length;
+  const st = { project: S.project, tags: [], owner: '' };
+  const ta = el('textarea', { class: 'nt-edit', rows: 3, placeholder: `Notitie voor alle ${n} foto's (mag leeg blijven)` });
+  const opts = el('div', { class: 'tags pop-tags' });
+  const render = () => {
+    const pb = el('button', { class: 'tag projsel' }, ico('folder'), el('span', {}, st.project), ico('chevronDown'));
+    pb.onclick = () => projectPickInline(pb, st.project, p => { st.project = p; render(); });
+    opts.replaceChildren(pb,
+      inlineSelect(st.tags[0] || '', 'Status', [...S.tags.map(t => ({ key: t, label: t, color: tagColor(t) })), { key: '', label: 'Geen status', color: '#71717a' }],
+        v => { st.tags = v ? [v] : []; render(); }),
+      ownerSelect(st.owner, v => { st.owner = v; render(); }));
+  };
+  render();
+  const go = el('button', { class: 'primary', style: 'width:100%;margin-top:12px', onclick: async () => {
+    closeSheet();
+    await batchImport(files, { note: ta.value.trim(), tags: st.tags, owner: st.owner, project: st.project });
+  } }, `${n} foto's importeren`);
+  openSheet(el('div', {},
+    el('h3', {}, `${n} foto's importeren`),
+    el('div', { class: 'warn' }, ico('alert'), el('span', {},
+      el('b', {}, `Let op: alle ${n} foto's krijgen dezelfde notitie, status en eigenaar.`),
+      ' Elke foto krijgt wel een eigen nummer en de datum en locatie uit de foto zelf. Achteraf kun je elke foto apart bewerken.')),
+    opts, ta, go,
+  ));
+}
+/* projectkeuze als lijstje binnen een venster */
+function projectPickInline(btn, current, onPick) {
+  const wrap = btn.parentElement;
+  const open = wrap.querySelector('.owner-list.projlist');
+  if (open) { open.remove(); return; }
+  btn.after(el('div', { class: 'owner-list menu projlist' },
+    ...S.projects.map(p => el('button', { class: 'menu-item plain', onclick: () => onPick(p) }, ico('folder'), p, p === current ? ico('check') : null))));
+}
+async function batchImport(files, { note, tags, owner, project }) {
+  let ok = 0, fail = 0, last = null;
+  for (let i = 0; i < files.length; i++) {
+    busy(`Importeren ${i + 1} / ${files.length}…`);
+    const f = files[i];
+    let bmp;
+    try {
+      const ex = await readExif(f);
+      const d = newDraft(f, { source: 'galerij', name: f.name, lat: ex.lat, lon: ex.lon, date: ex.date || f.lastModified, noDate: !ex.date });
+      Object.assign(d, { project, note, tags: [...tags], owner });
+      bmp = await createImageBitmap(f);
+      last = await saveDraft(d, bmp); ok++;
+    } catch (e) { console.warn('Batch import mislukt', f.name, e); fail++; }
+    finally { bmp?.close?.(); }
+  }
+  busy();
+  addProject(project);
+  if (last) S.flashId = last.id;
+  toast(`${plural(ok, 'foto', 'foto\'s')} geïmporteerd in ${project}${fail ? ` · ${fail} niet gelukt (bv. HEIC)` : ''}`, ok > 0, 3500);
+  if (S.screen === 'Notes') loadNotes(); else refreshCamBar();
 }
 async function importFile(f, source) {
   if (!f) return;
@@ -934,6 +1002,24 @@ async function refreshAllBars() {
 
 /* ---------------- verborgen info in de JPEG (om later terug te importeren) ---------------- */
 const META_TAG = 'WERFNOTITIES:';
+/* Kopie voor de galerij/delen: gele stip als herkenning + verborgen info.
+   De stip staat rechtsboven in het midden-vierkant, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
+async function exportJpeg(p) {
+  const blob = await getBlob(p.id + ':ann');
+  let marked = blob;
+  try {
+    const bmp = await createImageBitmap(blob);
+    const W = bmp.width, H = bmp.height, side = Math.min(W, H);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
+    const r = Math.max(7, Math.round(side * 0.022)), m = Math.round(side * 0.045);
+    const cx = (W + side) / 2 - m - r, cy = (H - side) / 2 + m + r;
+    ctx.beginPath(); ctx.arc(cx, cy, r + Math.max(2, r * 0.28), 0, Math.PI * 2); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = '#f5b400'; ctx.fill();
+    marked = await toBlob(c, 0.9);
+  } catch (e) { console.warn('Stip toevoegen mislukt', e); }
+  return withMeta(marked, p);
+}
 async function withMeta(blob, p) {
   const meta = {
     app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt, noDate: !!p.noDate,
@@ -1407,7 +1493,7 @@ function filterTag() {
 }
 async function annFiles(list) {
   const out = [];
-  for (const p of list) out.push(new File([await withMeta(await getBlob(p.id + ':ann'), p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
+  for (const p of list) out.push(new File([await exportJpeg(p)], fileBase(p) + '.jpg', { type: 'image/jpeg' }));
   return out;
 }
 /* Export-menu (uitklaplijst onder de knop): zelfde functies als de vroegere pagina Exports */
@@ -1665,7 +1751,7 @@ async function buildZip(list, note = '', notes = []) {
   const base = exportName([...list, ...notes]);
   const files = [];
   for (const p of list) {
-    files.push({ name: `${base}/met_notitie/${fileBase(p)}.jpg`, data: await withMeta(await getBlob(p.id + ':ann'), p) });
+    files.push({ name: `${base}/met_notitie/${fileBase(p)}.jpg`, data: await exportJpeg(p) });
     const ob = await getBlob(p.id + ':orig');
     files.push({ name: `${base}/origineel/${fileBase(p)}_origineel.${extOf(ob)}`, data: ob });
   }
@@ -1903,7 +1989,7 @@ function wire() {
   $('#ntText').addEventListener('input', updateComposer);
   $('#ntText').addEventListener('blur', () => setTimeout(updateComposer, 250));
   $('#btnShutter').onclick = capture;
-  $('#fileGallery').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'galerij'); };
+  $('#fileGallery').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; galleryFiles(fs); };
   $('#fileCamera').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f, 'camera'); };
   $('#fileImport').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) importAnnotated(fs); };
 
