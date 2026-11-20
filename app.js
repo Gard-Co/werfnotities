@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.5';
+const APP_VERSION = '4.6';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -399,6 +399,7 @@ async function batchImport(files, { note, tags, owner, project }) {
       Object.assign(d, { project, note, tags: [...tags], owner });
       bmp = await createImageBitmap(f);
       last = await saveDraft(d, bmp); ok++;
+      if (S.autoDl !== 'off') { await autoExport(last, f, true); await sleep(400); } // kopie in Downloads, zoals bij één foto
     } catch (e) { console.warn('Batch import mislukt', f.name, e); fail++; }
     finally { bmp?.close?.(); }
   }
