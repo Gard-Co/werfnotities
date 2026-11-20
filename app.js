@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '5.4';
+const APP_VERSION = '5.5';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -906,7 +906,7 @@ function ellipsize(ctx, t, maxW) {
   while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
   return t + '…';
 }
-async function renderAnnotated(bmp, rec) {
+async function renderAnnotated(bmp, rec, opts = {}) { // opts.mark: kopie voor de galerij, met het zwarte lipje
   const MAX = 1600;
   const cr = rec.crop || FULL;
   const sx = cr.x * bmp.width, sy = cr.y * bmp.height, sw = cr.w * bmp.width, sh = cr.h * bmp.height;
@@ -980,6 +980,7 @@ async function renderAnnotated(bmp, rec) {
       ctx.fillText(ellipsize(ctx, locText(rec), W - pad - dtW - fs * 0.8 - ax), ax, base);
     }
   }
+  if (opts.mark) { drawGalleryTab(ctx, W, c.height); return { blob: await toBlob(c, 0.8) }; } // één keer comprimeren
   const blob = await toBlob(c, 0.8);
   const tw = 360, th = Math.round(IH * tw / W);
   const tc = document.createElement('canvas'); tc.width = tw; tc.height = th;
@@ -1006,32 +1007,28 @@ const META_TAG = 'WERFNOTITIES:';
 /* Kopie voor de galerij/delen: gele stip als herkenning + verborgen info.
    Een zwart lipje rechtsboven met het witte camera-icoon, vast aan de rechterrand, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
 const CAM_BODY = new Path2D('M3 8.5a2 2 0 0 1 2-2h2.4l1.6-2.4h6l1.6 2.4H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
+/* Kopie voor galerij/delen: opnieuw opgebouwd vanaf het origineel, met het lipje erbij,
+   zodat de foto maar één keer als JPEG gecomprimeerd wordt. */
 async function exportJpeg(p) {
-  const blob = await getBlob(p.id + ':ann');
-  let marked = blob;
+  let out = null;
   try {
-    const bmp = await createImageBitmap(blob);
-    const W = bmp.width, H = bmp.height, side = Math.min(W, H);
-    const c = document.createElement('canvas'); c.width = W; c.height = H;
-    const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
-    // lipje rechtsboven (in het midden-vierkant), vast aan de rechterrand, met het camera-icoon van de app
-    const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.16), y = Math.round((H - side) / 2 + side * 0.04);
-    // zwart lipje met wit camera-icoon (zonder randje)
-    ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.roundRect(W - w, y, w + h, h, h / 2); ctx.fill();
-    const cs = h * 0.72, cx = W - w + h * 0.62, cy = y + h / 2;
-    ctx.save(); ctx.translate(cx - cs / 2, cy - cs / 2); ctx.scale(cs / 24, cs / 24);
-    ctx.fillStyle = '#ffffff'; ctx.fill(CAM_BODY);
-    ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.arc(12, 13, 4.4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(12, 13, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    // letters GC: daarop kun je zoeken in de Samsung Galerij (tekst in foto's)
-    ctx.fillStyle = '#ffffff'; ctx.font = FONT(Math.round(h * 0.56), 800); ctx.textBaseline = 'middle';
-    ctx.fillText('GC', cx + cs * 0.72, cy + h * 0.03);
-    marked = await toBlob(c, 0.9);
-  } catch (e) { console.warn('Stip toevoegen mislukt', e); }
-  return withMeta(marked, p);
+    const bmp = await createImageBitmap(await getBlob(p.id + ':orig'));
+    try { out = (await renderAnnotated(bmp, p, { mark: true })).blob; } finally { bmp.close(); }
+  } catch (e) { console.warn('Galerijkopie maken mislukt, gewone foto gebruikt', e); }
+  return withMeta(out || await getBlob(p.id + ':ann'), p);
 }
-async function withMeta(blob, p) {
+/* zwart lipje rechtsboven (in het midden-vierkant), vast aan de rechterrand, met wit camera-icoon */
+function drawGalleryTab(ctx, W, H) {
+  const side = Math.min(W, H);
+  const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.1), y = Math.round((H - side) / 2 + side * 0.04);
+  ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.roundRect(W - w, y, w + h, h, h / 2); ctx.fill();
+  const cs = h * 0.72, cx = W - w + h * 0.62, cy = y + h / 2;
+  ctx.save(); ctx.translate(cx - cs / 2, cy - cs / 2); ctx.scale(cs / 24, cs / 24);
+  ctx.fillStyle = '#ffffff'; ctx.fill(CAM_BODY);
+  ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.arc(12, 13, 4.4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(12, 13, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}async function withMeta(blob, p) {
   const meta = {
     app: 'werfnotities', v: 1, id: p.id, project: p.project, nr: p.nr, createdAt: p.createdAt, noDate: !!p.noDate,
     lat: p.lat, lon: p.lon, acc: p.acc, address: p.address, note: p.note, tags: p.tags, owner: p.owner || '', source: p.source,
