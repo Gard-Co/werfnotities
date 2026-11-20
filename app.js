@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.8';
+const APP_VERSION = '4.9';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1004,7 +1004,7 @@ async function refreshAllBars() {
 /* ---------------- verborgen info in de JPEG (om later terug te importeren) ---------------- */
 const META_TAG = 'WERFNOTITIES:';
 /* Kopie voor de galerij/delen: gele stip als herkenning + verborgen info.
-   Een smalle gele strook rechts over de volledige hoogte, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
+   Een geel lipje rechtsboven met het camera-icoon, vast aan de rechterrand, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
 const CAM_BODY = new Path2D('M3 8.5a2 2 0 0 1 2-2h2.4l1.6-2.4h6l1.6 2.4H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
 async function exportJpeg(p) {
   const blob = await getBlob(p.id + ':ann');
@@ -1014,9 +1014,15 @@ async function exportJpeg(p) {
     const W = bmp.width, H = bmp.height, side = Math.min(W, H);
     const c = document.createElement('canvas'); c.width = W; c.height = H;
     const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
-    // smalle gele strook over de volledige hoogte, tegen de rechterrand
-    const sw = Math.max(6, Math.round(W * 0.014));
-    ctx.fillStyle = '#ffc107'; ctx.fillRect(W - sw, 0, sw, H);    marked = await toBlob(c, 0.9);
+    // geel lipje rechtsboven (in het midden-vierkant), vast aan de rechterrand, met het camera-icoon van de app
+    const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.1), y = Math.round((H - side) / 2 + side * 0.04);
+    ctx.fillStyle = '#ffc107'; ctx.beginPath(); ctx.roundRect(W - w, y, w + h, h, h / 2); ctx.fill();
+    const cs = h * 0.72, cx = W - w + h * 0.62, cy = y + h / 2;
+    ctx.save(); ctx.translate(cx - cs / 2, cy - cs / 2); ctx.scale(cs / 24, cs / 24);
+    ctx.fillStyle = '#141414'; ctx.fill(CAM_BODY);
+    ctx.fillStyle = '#ffc107'; ctx.beginPath(); ctx.arc(12, 13, 4.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#141414'; ctx.beginPath(); ctx.arc(12, 13, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();    marked = await toBlob(c, 0.9);
   } catch (e) { console.warn('Stip toevoegen mislukt', e); }
   return withMeta(marked, p);
 }
