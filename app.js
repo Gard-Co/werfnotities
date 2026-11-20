@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '5.2';
+const APP_VERSION = '5.4';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -143,7 +143,7 @@ const isoDay = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad2
 const fmtCoords = (lat, lon) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 const locText = p => p.address || (p.lat != null ? fmtCoords(p.lat, p.lon) : 'Geen locatie');
 const safe = s => (s || '').replace(/[\\/:*?"<>|#%]+/g, '').trim().replace(/\s+/g, '_').slice(0, 40) || 'project';
-const fileBase = p => { const d = new Date(p.createdAt); return `${safe(p.project)}_${String(p.nr).padStart(3, '0')}_${isoDay(p.createdAt)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`; };
+const fileBase = p => { const d = new Date(p.createdAt); return `Fotonotitie_${safe(p.project)}_${String(p.nr).padStart(3, '0')}_${isoDay(p.createdAt)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`; };
 const extOf = b => ({ 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[b?.type] || 'jpg');
 const mapUrl = p => `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`;
 const plural = (n, one, more) => `${n} ${n === 1 ? one : more}`;
@@ -1015,7 +1015,7 @@ async function exportJpeg(p) {
     const c = document.createElement('canvas'); c.width = W; c.height = H;
     const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
     // lipje rechtsboven (in het midden-vierkant), vast aan de rechterrand, met het camera-icoon van de app
-    const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.1), y = Math.round((H - side) / 2 + side * 0.04);
+    const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.16), y = Math.round((H - side) / 2 + side * 0.04);
     // zwart lipje met wit camera-icoon (zonder randje)
     ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.roundRect(W - w, y, w + h, h, h / 2); ctx.fill();
     const cs = h * 0.72, cx = W - w + h * 0.62, cy = y + h / 2;
@@ -1023,7 +1023,11 @@ async function exportJpeg(p) {
     ctx.fillStyle = '#ffffff'; ctx.fill(CAM_BODY);
     ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.arc(12, 13, 4.4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(12, 13, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();    marked = await toBlob(c, 0.9);
+    ctx.restore();
+    // letters GC: daarop kun je zoeken in de Samsung Galerij (tekst in foto's)
+    ctx.fillStyle = '#ffffff'; ctx.font = FONT(Math.round(h * 0.56), 800); ctx.textBaseline = 'middle';
+    ctx.fillText('GC', cx + cs * 0.72, cy + h * 0.03);
+    marked = await toBlob(c, 0.9);
   } catch (e) { console.warn('Stip toevoegen mislukt', e); }
   return withMeta(marked, p);
 }
@@ -1041,7 +1045,33 @@ async function withMeta(blob, p) {
   const len = txt.length + 2;
   const seg = new Uint8Array(4 + txt.length);
   seg[0] = 0xFF; seg[1] = 0xFE; seg[2] = len >> 8; seg[3] = len & 0xFF; seg.set(txt, 4);
-  return new Blob([buf.subarray(0, at), seg, buf.subarray(at)], { type: 'image/jpeg' });
+  const desc = ['Fotonotitie GC', p.project, '#' + p.nr, statusOf(p), p.owner || '', (p.note || '').replace(/\s+/g, ' ')].filter(Boolean).join(' · ').slice(0, 900);
+  const exif = exifSegment(desc, ['Fotonotitie', 'GC', p.project, statusOf(p)].filter(Boolean).join(';'));
+  return new Blob([buf.subarray(0, at), exif, seg, buf.subarray(at)], { type: 'image/jpeg' });
+}
+/* EXIF-blok met beschrijving (ImageDescription) en Windows-velden (XPComment/XPKeywords), zichtbaar in foto-info
+   en doorzoekbaar in galerij-apps die deze velden lezen. */
+function exifSegment(desc, keywords) {
+  const u8 = s => new TextEncoder().encode(s + '\0');
+  const u16 = s => { const b = new Uint8Array((s.length + 1) * 2); for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); b[i * 2] = c & 255; b[i * 2 + 1] = c >> 8; } return b; };
+  const entries = [[0x010E, 2, u8(desc)], [0x9C9C, 1, u16(desc)], [0x9C9E, 1, u16(keywords)]]; // oplopend op tag
+  const ifdLen = 2 + entries.length * 12 + 4;
+  let dataLen = 0; entries.forEach(e => { if (e[2].length > 4) dataLen += e[2].length + (e[2].length & 1); });
+  const tiff = new Uint8Array(8 + ifdLen + dataLen), v = new DataView(tiff.buffer);
+  tiff.set([0x49, 0x49, 0x2A, 0x00]); v.setUint32(4, 8, true);
+  v.setUint16(8, entries.length, true);
+  let off = 8 + ifdLen;
+  entries.forEach(([tag, type, bytes], i) => {
+    const e = 10 + i * 12;
+    v.setUint16(e, tag, true); v.setUint16(e + 2, type, true); v.setUint32(e + 4, bytes.length, true);
+    if (bytes.length <= 4) tiff.set(bytes, e + 8);
+    else { v.setUint32(e + 8, off, true); tiff.set(bytes, off); off += bytes.length + (bytes.length & 1); }
+  });
+  v.setUint32(10 + entries.length * 12, 0, true);
+  const segLen = 2 + 6 + tiff.length;
+  const seg = new Uint8Array(2 + segLen);
+  seg.set([0xFF, 0xE1, segLen >> 8, segLen & 255, 0x45, 0x78, 0x69, 0x66, 0, 0]); seg.set(tiff, 10);
+  return seg;
 }
 async function readMeta(file) {
   try {
@@ -1714,7 +1744,7 @@ function mailBody(items, rt) {
     return text ? `• ${text}\n  ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
   });
   // mailtekst: titel, lege regel, meteen de lijst (geen aantallen of filters)
-  const head = [rt.title, '', ...(items.some(p => p.kind === 'note') ? ['° = notitie zonder foto', ''] : [])];
+  const head = [rt.title, '', ...(items.some(p => p.kind === 'note') ? ['° = notitie zonder foto', '', ''] : [])];
 
   return [...head, ...blocks.join('\n\n').split('\n')].join('\n');
 }const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';
