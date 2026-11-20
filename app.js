@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '5.0';
+const APP_VERSION = '5.1';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1016,8 +1016,7 @@ async function exportJpeg(p) {
     const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
     // lipje rechtsboven (in het midden-vierkant), vast aan de rechterrand, met het camera-icoon van de app
     const h = Math.max(16, Math.round(side * 0.06)), w = Math.round(side * 0.1), y = Math.round((H - side) / 2 + side * 0.04);
-    // zwart lipje met witte camera, dun licht randje zodat het ook op donkere foto's opvalt
-    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.beginPath(); ctx.roundRect(W - w - 2, y - 2, w + h + 4, h + 4, (h + 4) / 2); ctx.fill();
+    // zwart lipje met wit camera-icoon (zonder randje)
     ctx.fillStyle = '#111111'; ctx.beginPath(); ctx.roundRect(W - w, y, w + h, h, h / 2); ctx.fill();
     const cs = h * 0.72, cx = W - w + h * 0.62, cy = y + h / 2;
     ctx.save(); ctx.translate(cx - cs / 2, cy - cs / 2); ctx.scale(cs / 24, cs / 24);
