@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '4.4';
+const APP_VERSION = '4.5';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -1003,7 +1003,8 @@ async function refreshAllBars() {
 /* ---------------- verborgen info in de JPEG (om later terug te importeren) ---------------- */
 const META_TAG = 'WERFNOTITIES:';
 /* Kopie voor de galerij/delen: gele stip als herkenning + verborgen info.
-   De stip staat rechtsboven in het midden-vierkant, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
+   Het mini-app-icoon staat rechtsboven in het midden-vierkant, zodat ze ook op de vierkante tegeltjes van de galerij zichtbaar blijft. */
+const CAM_BODY = new Path2D('M3 8.5a2 2 0 0 1 2-2h2.4l1.6-2.4h6l1.6 2.4H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
 async function exportJpeg(p) {
   const blob = await getBlob(p.id + ':ann');
   let marked = blob;
@@ -1012,10 +1013,16 @@ async function exportJpeg(p) {
     const W = bmp.width, H = bmp.height, side = Math.min(W, H);
     const c = document.createElement('canvas'); c.width = W; c.height = H;
     const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0); bmp.close();
-    const r = Math.max(7, Math.round(side * 0.022)), m = Math.round(side * 0.045);
-    const cx = (W + side) / 2 - m - r, cy = (H - side) / 2 + m + r;
-    ctx.beginPath(); ctx.arc(cx, cy, r + Math.max(2, r * 0.28), 0, Math.PI * 2); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = '#f5b400'; ctx.fill();
+    // mini app-icoon: geel afgerond vierkant met donkere camera
+    const s = Math.max(14, Math.round(side * 0.042)), m = Math.round(side * 0.04);
+    const x0 = (W + side) / 2 - m - s, y0 = (H - side) / 2 + m;
+    ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.beginPath(); ctx.roundRect(x0 - 1.5, y0 - 1.5, s + 3, s + 3, s * 0.26); ctx.fill();
+    ctx.fillStyle = '#ffc107'; ctx.beginPath(); ctx.roundRect(x0, y0, s, s, s * 0.24); ctx.fill();
+    ctx.save(); ctx.translate(x0 + s * 0.12, y0 + s * 0.12); ctx.scale(s * 0.76 / 24, s * 0.76 / 24);
+    ctx.fillStyle = '#141414'; ctx.fill(CAM_BODY);
+    ctx.fillStyle = '#ffc107'; ctx.beginPath(); ctx.arc(12, 13, 4.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#141414'; ctx.beginPath(); ctx.arc(12, 13, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
     marked = await toBlob(c, 0.9);
   } catch (e) { console.warn('Stip toevoegen mislukt', e); }
   return withMeta(marked, p);
