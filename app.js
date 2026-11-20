@@ -1,7 +1,7 @@
 'use strict';
 /* Fotonotities: foto + notitie + project + locatie + datum, alles lokaal op de gsm. */
 
-const APP_VERSION = '5.1';
+const APP_VERSION = '5.2';
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -83,7 +83,7 @@ const S = {
   people: LS.get('people', []),
   ntView: LS.get('ntView', 'list'), // notities: 'list' of 'tiles' // personen aan wie een notitie toegewezen kan worden (eigenaar)
   ntProject: null, ntStatus: new Set(), ntOwner: new Set(), ovOwner: new Set(),
-  ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'date'
+  ovStatus: new Set(), ovSort: LS.get('ovSort', 'status'), // 'status' | 'nr' | 'date'
   viewId: null,
 };
 const STATUS_COLORS = { nok: '#ef4444', todo: '#f97316', ok: '#22c55e', testen: '#3b82f6' };
@@ -1111,7 +1111,11 @@ const statusOf = p => p.tags?.[0] || '';
 const statusRank = p => { const t = statusOf(p); if (!t) return 999; const i = S.tags.indexOf(t); return i < 0 ? 900 : i; };
 const isNote = p => (p.kind === 'note' ? 1 : 0);
 const byNr = (a, b) => a.project.localeCompare(b.project) || isNote(a) - isNote(b) || a.nr - b.nr;
-const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b) : tsOf(b) - tsOf(a));
+/* volgorde (scherm én exports): op status · op nummer (hoogste eerst) · op datum (nieuwste eerst) */
+const listOrder = (a, b) => (S.ovSort === 'status' ? statusRank(a) - statusRank(b) || byNr(a, b)
+  : S.ovSort === 'date' ? tsOf(b) - tsOf(a) || b.nr - a.nr
+  : b.nr - a.nr || a.project.localeCompare(b.project) || isNote(a) - isNote(b));
+const SORT_LABEL = { status: 'Op status', nr: 'Op nummer', date: 'Op datum' };
 const ownerOf = p => p.owner || '';
 const ownerOk = (set, p) => !set.size || set.has(ownerOf(p));
 /* Filtermenu (uitklaplijst) met aanvinkbare opties. opts: [{ key, label, color?, icon? }] */
@@ -1141,7 +1145,8 @@ function sortMenu(anchor, reload) {
   openSheet(el('div', { class: 'menu' },
     el('h4', {}, 'Volgorde'),
     el('button', { class: 'menu-item plain', onclick: () => pick('status') }, ico('sort'), 'Op status (NOK eerst)', S.ovSort === 'status' ? ico('check') : null),
-    el('button', { class: 'menu-item plain', onclick: () => pick('date') }, ico('clock'), 'Nieuwste eerst', S.ovSort !== 'status' ? ico('check') : null),
+    el('button', { class: 'menu-item plain', onclick: () => pick('nr') }, ico('list'), 'Op nummer (hoogste eerst)', S.ovSort === 'nr' ? ico('check') : null),
+    el('button', { class: 'menu-item plain', onclick: () => pick('date') }, ico('clock'), 'Op datum (nieuwste eerst)', S.ovSort === 'date' ? ico('check') : null),
   ), null, anchor);
 }
 /* Filterbalk: drie uitklaplijsten (volgorde, status, eigenaar). */
@@ -1162,7 +1167,7 @@ function renderFilter(inProj, box = '#ovFilter', set = S.ovStatus, reload = load
   const stBtn = dd('fstatus', 'tag', stLabel, set.size > 0, b => multiFilterMenu(b, 'Filter op status', stOpts, inProj, statusOf, set, reload, 'Alle statussen'));
   if (stDot) stBtn.firstChild.replaceWith(stDot);
   $(box).replaceChildren(
-    dd('fsortdd', 'sort', S.ovSort === 'status' ? 'Op status' : 'Nieuwste', false, b => sortMenu(b, reload)),
+    dd('fsortdd', 'sort', SORT_LABEL[S.ovSort] || 'Op status', false, b => sortMenu(b, reload)),
     stBtn,
     dd('fownerdd', 'user', owLabel, ownerSet.size > 0, b => multiFilterMenu(b, 'Filter op eigenaar', owOpts, inProj, ownerOf, ownerSet, reload, 'Alle eigenaars')),
   );
@@ -1173,7 +1178,7 @@ function filterDesc() {
   parts.push(S.ovStatus.size ? 'status ' + [...S.ovStatus].map(s => s || 'geen status').join(', ') : 'alle statussen');
   parts.push(S.ovOwner.size ? 'eigenaar ' + [...S.ovOwner].map(o => o || 'geen eigenaar').join(', ') : 'alle eigenaars');
   if (S.selecting && S.selected.size) parts.push('eigen selectie');
-  parts.push(S.ovSort === 'status' ? 'volgorde op status' : 'volgorde op nummer');
+  parts.push('volgorde ' + (SORT_LABEL[S.ovSort] || 'Op status').toLowerCase());
   return 'Filter: ' + parts.join(', ');
 }
 
@@ -1424,7 +1429,7 @@ async function exportNotes() {
   return (await getAllNotes()).map(n => ({ ...n, kind: 'note' }))
     .filter(n => (S.ovProject === '__all__' || n.project === S.ovProject) && (!S.ovStatus.size || S.ovStatus.has(statusOf(n))) && ownerOk(S.ovOwner, n));
 }
-const mergeItems = (photos, notes = []) => [...photos, ...notes].sort(S.ovSort === 'status' ? (a, b) => statusRank(a) - statusRank(b) || byNr(a, b) : byNr);
+const mergeItems = (photos, notes = []) => [...photos, ...notes].sort(listOrder); // zelfde volgorde als op het scherm
 function renderGrid() {
   gridUrls.forEach(u => URL.revokeObjectURL(u)); gridUrls = [];
   const g = $('#ntGrid'); g.replaceChildren();
@@ -1484,7 +1489,7 @@ function updateActions() {
 function targets() {
   const arr = S.selecting && S.selected.size ? S.list.filter(p => S.selected.has(p.id)) : S.list;
   // gesorteerd op status: zelfde volgorde als op het scherm (NOK, ToDo, OK, Testen); anders per nummer
-  return S.ovSort === 'status' ? [...arr] : [...arr].sort(byNr);
+  return [...arr]; // al in de volgorde van het scherm
 }
 // bestandsnaam: Notities_Projectnaam_datum
 function exportName(items) { const pn = projName(items); return `Notities_${isGeneral(pn) ? '' : safe(pn) + '_'}${isoDay(Date.now())}${S.exportTag || ''}`; }
@@ -1709,7 +1714,7 @@ function mailBody(items, rt) {
     return text ? `• ${text}\n  ${meta}` : `• ${meta}`; // geen tekst: enkel nummer/status/eigenaar
   });
   // mailtekst: titel, lege regel, meteen de lijst (geen aantallen of filters)
-  const head = [rt.title, ''];
+  const head = [rt.title, '', ...(items.some(p => p.kind === 'note') ? ['° = notitie zonder foto', ''] : [])];
 
   return [...head, ...blocks.join('\n\n').split('\n')].join('\n');
 }const itemText = p => (p.kind === 'note' ? p.text : p.note) || '';

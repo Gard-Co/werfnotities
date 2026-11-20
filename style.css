@@ -392,3 +392,7 @@ img { -webkit-touch-callout:none; }
 .warn .ic { width:20px; height:20px; color:#f97316; flex:none; margin-top:1px; }
 .warn b { font-weight:650; }
 .owner-list.projlist { flex-basis:100%; }
+
+/* ---------- v5.2: tegels altijd vierkant (rijen werden samengedrukt bij veel items) ---------- */
+#ntGrid { min-height:0; grid-auto-rows:calc((100vw - 8px) / 3); }
+#ntGrid .cell { aspect-ratio:auto; height:100%; }
